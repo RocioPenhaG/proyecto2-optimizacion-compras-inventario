@@ -10,6 +10,19 @@ from django.utils import timezone
 from .etl import ejecutar_etl_analitico
 
 
+@shared_task(name="apps.analytics.tasks.ping_analytics")
+def ping_analytics():
+    """
+    Tarea simple de health-check para validar que Celery + Redis
+    procesan tareas en background correctamente.
+    """
+    return {
+        "ok": True,
+        "service": "analytics",
+        "executed_at": timezone.now().isoformat(),
+    }
+
+
 @shared_task(name="apps.analytics.tasks.run_etl_analitico_d1")
 def run_etl_analitico_d1():
     """

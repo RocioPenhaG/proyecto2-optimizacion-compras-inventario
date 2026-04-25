@@ -2,6 +2,7 @@
 Base analítica Release 1: tablas de hechos para consumo y registro de corridas ETL.
 Origen: tablas operativas (inventory.MovStock). Destino: HechoConsumo.
 """
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -11,15 +12,41 @@ from apps.products.models import Producto
 class CorridaAnalitica(models.Model):
     """Registro de cada ejecución del proceso ETL analítico."""
     class Estado(models.TextChoices):
-        OK = "OK", "OK"
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
         ERROR = "ERROR", "Error"
+        CANCELLED = "CANCELLED", "Cancelled"
+        # Compatibilidad legado: el ETL actual todavía setea estado=OK.
+        OK = "OK", "OK (Legacy)"
+
+    class Metodo(models.TextChoices):
+        MANUAL = "MANUAL", "Manual"
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        API = "API", "API"
+        RETRY = "RETRY", "Retry"
 
     fecha_ejecucion = models.DateTimeField(default=timezone.now)
-    estado = models.CharField(max_length=10, choices=Estado.choices)
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.QUEUED)
     mensaje = models.TextField(blank=True, default="")
     registros_procesados = models.PositiveIntegerField(default=0)
     fecha_desde = models.DateField(null=True, blank=True)
     fecha_hasta = models.DateField(null=True, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    task_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
+    metodo = models.CharField(max_length=20, choices=Metodo.choices, default=Metodo.MANUAL)
+    parametros = models.JSONField(default=dict, blank=True)
+    puntos_usados = models.PositiveIntegerField(default=0)
+    error_detalle = models.TextField(blank=True, default="")
+    ejecutado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="corridas_analiticas",
+    )
 
     class Meta:
         verbose_name = "Corrida analítica"
