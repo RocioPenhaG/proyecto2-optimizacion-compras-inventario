@@ -97,3 +97,39 @@ class ResumenConsumoMensual(models.Model):
 
     def __str__(self):
         return f"{self.producto.sku} | {self.anio}-{self.mes:02d} | {self.cantidad_salidas}"
+
+
+class ResultadoTendenciaLineal(models.Model):
+    """
+    Resultado analítico de una corrida de tendencia lineal por producto.
+    Se persiste por corrida para trazabilidad y auditoría.
+    """
+    corrida = models.ForeignKey(
+        CorridaAnalitica,
+        on_delete=models.CASCADE,
+        related_name="resultados_tendencia",
+    )
+    producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name="resultados_tendencia")
+    variable_objetivo = models.CharField(max_length=100)
+    periodicidad = models.CharField(max_length=20)
+    fecha_inicio = models.DateField()
+    fecha_fin = models.DateField()
+    puntos_usados = models.PositiveIntegerField(default=0)
+    pendiente = models.DecimalField(max_digits=18, decimal_places=6)
+    intercepto = models.DecimalField(max_digits=18, decimal_places=6)
+    r2 = models.DecimalField(max_digits=10, decimal_places=6, null=True, blank=True)
+    mae = models.DecimalField(max_digits=14, decimal_places=6, null=True, blank=True)
+    rmse = models.DecimalField(max_digits=14, decimal_places=6, null=True, blank=True)
+    prediccion_siguiente = models.DecimalField(max_digits=18, decimal_places=6)
+    metadata = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Resultado de tendencia lineal"
+        verbose_name_plural = "Resultados de tendencia lineal"
+        ordering = ["-corrida__fecha_ejecucion", "producto_id"]
+
+    def __str__(self):
+        return (
+            f"{self.producto.sku} | {self.variable_objetivo} | {self.periodicidad} | "
+            f"pred={self.prediccion_siguiente}"
+        )

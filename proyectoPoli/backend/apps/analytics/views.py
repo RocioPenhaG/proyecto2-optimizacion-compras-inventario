@@ -13,11 +13,16 @@ from rest_framework.response import Response
 
 from apps.users.models import Role
 from apps.products.models import Producto
-from .models import HechoConsumo, ResumenConsumoMensual
+from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
+from .tasks import run_etl_analitico_d1
 
 
 def puede_ver_analytics(user):
     return user.role in (Role.COMPRAS, Role.GERENCIA, Role.CONTABLE, Role.ADMINISTRADOR)
+
+
+def puede_gestionar_corridas(user):
+    return user.role in (Role.GERENCIA, Role.ADMINISTRADOR)
 
 
 def parse_fechas(request):
@@ -270,3 +275,143 @@ def habitos_resumen(request):
         "filtro_desde": str(fecha_desde),
         "filtro_hasta": str(fecha_hasta),
     })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def ejecutar_etl_d1(request):
+    """
+    Encola una corrida ETL D-1 vía Celery.
+    No ejecuta procesamiento sincrónico.
+    """
+    if not puede_gestionar_corridas(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ejecutar corridas analíticas."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    async_result = run_etl_analitico_d1.delay()
+    return Response(
+        {
+            "message": "Corrida ETL D-1 encolada correctamente.",
+            "task_id": async_result.id,
+            "status": "QUEUED",
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def estado_corrida(request, task_id):
+    """Consulta estado y métricas de una corrida por task_id."""
+    if not puede_gestionar_corridas(request.user):
+        return Response(
+            {"detail": "No tiene permiso para consultar corridas analíticas."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        corrida = CorridaAnalitica.objects.get(task_id=task_id)
+    except CorridaAnalitica.DoesNotExist:
+        return Response(
+            {"detail": "No existe una corrida analítica para ese task_id."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    return Response(
+        {
+            "task_id": corrida.task_id,
+            "estado": corrida.estado,
+            "queued_at": corrida.queued_at,
+            "started_at": corrida.started_at,
+            "finished_at": corrida.finished_at,
+            "registros_procesados": corrida.registros_procesados,
+            "puntos_usados": corrida.puntos_usados,
+            "mensaje": corrida.mensaje,
+            "error_detalle": corrida.error_detalle,
+            "resultados_tendencia_count": corrida.resultados_tendencia.count(),
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def ultimas_corridas(request):
+    """Lista últimas corridas (default 10, máximo 20)."""
+    if not puede_gestionar_corridas(request.user):
+        return Response(
+            {"detail": "No tiene permiso para consultar corridas analíticas."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        limite = int(request.query_params.get("limit", 10))
+    except (TypeError, ValueError):
+        return Response({"detail": "Parámetro limit inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+    limite = max(1, min(limite, 20))
+    corridas = CorridaAnalitica.objects.all().order_by("-fecha_ejecucion")[:limite]
+    data = [
+        {
+            "id": c.id,
+            "task_id": c.task_id,
+            "estado": c.estado,
+            "fecha_ejecucion": c.fecha_ejecucion,
+            "queued_at": c.queued_at,
+            "started_at": c.started_at,
+            "finished_at": c.finished_at,
+            "registros_procesados": c.registros_procesados,
+            "puntos_usados": c.puntos_usados,
+            "mensaje": c.mensaje,
+            "error_detalle": c.error_detalle,
+            "resultados_tendencia_count": c.resultados_tendencia.count(),
+        }
+        for c in corridas
+    ]
+    return Response({"count": len(data), "results": data})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tendencias_por_corrida(request, corrida_id):
+    """Lista resultados de tendencia lineal asociados a una corrida."""
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ver analytics."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        corrida = CorridaAnalitica.objects.get(id=corrida_id)
+    except CorridaAnalitica.DoesNotExist:
+        return Response(
+            {"detail": "No existe la corrida analítica solicitada."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    resultados = (
+        ResultadoTendenciaLineal.objects.filter(corrida=corrida)
+        .select_related("producto")
+        .order_by("producto__sku", "producto__nombre", "id")
+    )
+    data = [
+        {
+            "id": r.id,
+            "producto_id": r.producto_id,
+            "producto_nombre": r.producto.nombre,
+            "producto_sku": r.producto.sku,
+            "periodicidad": r.periodicidad,
+            "puntos_usados": r.puntos_usados,
+            "pendiente": float(r.pendiente),
+            "intercepto": float(r.intercepto),
+            "r2": float(r.r2) if r.r2 is not None else None,
+            "mae": float(r.mae) if r.mae is not None else None,
+            "rmse": float(r.rmse) if r.rmse is not None else None,
+            "prediccion_siguiente": float(r.prediccion_siguiente),
+            "fecha_inicio": r.fecha_inicio,
+            "fecha_fin": r.fecha_fin,
+        }
+        for r in resultados
+    ]
+    return Response({"corrida_id": corrida.id, "task_id": corrida.task_id, "count": len(data), "results": data})

@@ -1,14 +1,56 @@
 from django.contrib import admin
-from django.utils import timezone
-from .models import CorridaAnalitica, HechoConsumo, ResumenConsumoMensual
-from .etl import ejecutar_etl_analitico
+from .models import CorridaAnalitica, HechoConsumo, ResumenConsumoMensual, ResultadoTendenciaLineal
+
+
+class ResultadoTendenciaLinealInline(admin.TabularInline):
+    model = ResultadoTendenciaLineal
+    extra = 0
+    fields = (
+        "producto",
+        "periodicidad",
+        "puntos_usados",
+        "pendiente",
+        "intercepto",
+        "r2",
+        "prediccion_siguiente",
+        "fecha_inicio",
+        "fecha_fin",
+    )
+    readonly_fields = fields
+    can_delete = False
 
 
 @admin.register(CorridaAnalitica)
 class CorridaAnaliticaAdmin(admin.ModelAdmin):
-    list_display = ("fecha_ejecucion", "estado", "registros_procesados", "fecha_desde", "fecha_hasta")
+    list_display = (
+        "fecha_ejecucion",
+        "estado",
+        "task_id",
+        "registros_procesados",
+        "puntos_usados",
+        "started_at",
+        "finished_at",
+        "fecha_desde",
+        "fecha_hasta",
+    )
     list_filter = ("estado",)
-    readonly_fields = ("fecha_ejecucion", "estado", "mensaje", "registros_procesados", "fecha_desde", "fecha_hasta")
+    readonly_fields = (
+        "fecha_ejecucion",
+        "estado",
+        "task_id",
+        "queued_at",
+        "started_at",
+        "finished_at",
+        "mensaje",
+        "error_detalle",
+        "registros_procesados",
+        "puntos_usados",
+        "metodo",
+        "parametros",
+        "fecha_desde",
+        "fecha_hasta",
+    )
+    inlines = (ResultadoTendenciaLinealInline,)
 
     def has_add_permission(self, request):
         return False
@@ -33,3 +75,21 @@ class ResumenConsumoMensualAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(ResultadoTendenciaLineal)
+class ResultadoTendenciaLinealAdmin(admin.ModelAdmin):
+    list_display = (
+        "corrida",
+        "producto",
+        "periodicidad",
+        "puntos_usados",
+        "pendiente",
+        "intercepto",
+        "r2",
+        "prediccion_siguiente",
+        "fecha_inicio",
+        "fecha_fin",
+    )
+    list_filter = ("producto", "periodicidad", "fecha_inicio", "fecha_fin")
+    search_fields = ("producto__nombre", "producto__sku")
