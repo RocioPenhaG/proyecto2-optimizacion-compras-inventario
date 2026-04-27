@@ -1,9 +1,11 @@
+import re
+
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.users.models import Role, User
-from .models import Producto
+from .models import Producto, siguiente_sku_spk
 
 
 class FuncionarioCatalogoTests(TestCase):
@@ -64,3 +66,38 @@ class FuncionarioCatalogoTests(TestCase):
             self.client.get("/api/inventory/stock/").status_code,
             status.HTTP_403_FORBIDDEN,
         )
+
+
+class ProductoSkuAutogeneradoTests(TestCase):
+    def test_autogen_formato_spk_y_secuencia(self):
+        p1 = Producto(nombre="A", unidad="UN")
+        p1.save()
+        self.assertRegex(p1.sku, r"^SPK-\d{4}$")
+        p2 = Producto(nombre="B", unidad="UN")
+        p2.save()
+        self.assertRegex(p2.sku, r"^SPK-\d{4}$")
+        n1 = int(re.match(r"^SPK-(\d{4})$", p1.sku).group(1))
+        n2 = int(re.match(r"^SPK-(\d{4})$", p2.sku).group(1))
+        self.assertEqual(n2, n1 + 1)
+
+    def test_siguiente_sku_ignora_formato_distinto(self):
+        Producto.objects.create(sku="LEGACY-99", nombre="L", unidad="UN")
+        p = Producto(nombre="Nuevo", unidad="UN")
+        p.save()
+        self.assertEqual(p.sku, "SPK-0001")
+
+    def test_siguiente_sku_incrementa_max_spk(self):
+        Producto.objects.create(sku="SPK-0003", nombre="A", unidad="UN")
+        Producto.objects.create(sku="OTRO", nombre="B", unidad="UN")
+        p = Producto(nombre="C", unidad="UN")
+        p.save()
+        self.assertEqual(p.sku, "SPK-0004")
+
+    def test_sku_explicito_no_se_sobrescribe(self):
+        p = Producto(sku="MANUAL-1", nombre="M", unidad="UN")
+        p.save()
+        self.assertEqual(p.sku, "MANUAL-1")
+
+    def test_siguiente_sku_spk_helper(self):
+        Producto.objects.create(sku="SPK-0009", nombre="X", unidad="UN")
+        self.assertEqual(siguiente_sku_spk(), "SPK-0010")
