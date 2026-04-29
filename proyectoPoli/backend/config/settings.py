@@ -4,18 +4,40 @@ from pathlib import Path
 
 import environ
 
-env = environ.Env(DEBUG=(bool, True))
+env = environ.Env()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 environ.Env.read_env(BASE_DIR / "config" / ".env")
 
-SECRET_KEY = env("DJANGO_SECRET_KEY", default="dev-secret-change-in-production")
-DEBUG = env.bool("DEBUG", default=True)
-ALLOWED_HOSTS = env.list(
-    "ALLOWED_HOSTS",
-    default=["localhost", "127.0.0.1", "localhost:5173", "127.0.0.1:5173"],
-)
+SECRET_KEY = env("DJANGO_SECRET_KEY")
+DEBUG = env.bool("DEBUG", default=False)
+
+# Si ALLOWED_HOSTS está en .env pero vacío, env.list puede dejar la lista vacía y Django
+# responde 400 DisallowedHost para cualquier host (incl. 127.0.0.1).
+_default_hosts = ["localhost", "127.0.0.1", "localhost:5173", "127.0.0.1:5173"]
+_raw_hosts = os.environ.get("ALLOWED_HOSTS")
+if _raw_hosts is not None and not str(_raw_hosts).strip():
+    ALLOWED_HOSTS = list(_default_hosts)
+else:
+    ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=_default_hosts)
+    if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
+        ALLOWED_HOSTS = list(_default_hosts)
+
+# Login POST del admin con Django 4+ comprueba orígenes de confianza.
+_default_csrf_origins = [
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+_raw_csrf = os.environ.get("CSRF_TRUSTED_ORIGINS")
+if _raw_csrf is not None and not str(_raw_csrf).strip():
+    CSRF_TRUSTED_ORIGINS = list(_default_csrf_origins)
+else:
+    CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=_default_csrf_origins)
+    if not CSRF_TRUSTED_ORIGINS or CSRF_TRUSTED_ORIGINS == [""]:
+        CSRF_TRUSTED_ORIGINS = list(_default_csrf_origins)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -85,7 +107,7 @@ TIME_ZONE = "America/Argentina/Buenos_Aires"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "users.User"

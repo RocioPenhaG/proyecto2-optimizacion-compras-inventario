@@ -30,36 +30,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadUser = useCallback(async (access: string) => {
-    try {
-      const me = await getMe(access);
-      setUser(me);
-    } catch {
-      const stored = localStorage.getItem(REFRESH_KEY);
-      if (stored) {
-        try {
-          const { access: newAccess } = await refreshToken(stored);
-          localStorage.setItem(ACCESS_KEY, newAccess);
-          const me = await getMe(newAccess);
-          setUser(me);
-        } catch {
+  const loadUser = useCallback(
+    async (access: string, signal?: AbortSignal, isStale?: () => boolean) => {
+      const fetchInit = signal ? { signal } : undefined;
+      const stale = () => isStale?.() ?? false;
+      try {
+        const me = await getMe(access, fetchInit);
+        if (stale()) return;
+        setUser(me);
+      } catch {
+        if (signal?.aborted) {
           localStorage.removeItem(ACCESS_KEY);
           localStorage.removeItem(REFRESH_KEY);
-          setUser(null);
+          if (!stale()) setUser(null);
+          return;
         }
-      } else {
-        setUser(null);
+        const stored = localStorage.getItem(REFRESH_KEY);
+        if (stored) {
+          try {
+            const { access: newAccess } = await refreshToken(stored, fetchInit);
+            if (stale()) return;
+            localStorage.setItem(ACCESS_KEY, newAccess);
+            const me = await getMe(newAccess, fetchInit);
+            if (stale()) return;
+            setUser(me);
+          } catch {
+            if (signal?.aborted) {
+              localStorage.removeItem(ACCESS_KEY);
+              localStorage.removeItem(REFRESH_KEY);
+              if (!stale()) setUser(null);
+              return;
+            }
+            localStorage.removeItem(ACCESS_KEY);
+            localStorage.removeItem(REFRESH_KEY);
+            if (!stale()) setUser(null);
+          }
+        } else {
+          if (!stale()) setUser(null);
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
+    let stale = false;
     const access = localStorage.getItem(ACCESS_KEY);
     if (!access) {
       setLoading(false);
-      return;
+      return () => {
+        stale = true;
+      };
     }
-    loadUser(access).finally(() => setLoading(false));
+    const controller = new AbortController();
+    const timeoutMs = 15_000;
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    loadUser(access, controller.signal, () => stale).finally(() => {
+      window.clearTimeout(timeoutId);
+      if (!stale) setLoading(false);
+    });
+    return () => {
+      stale = true;
+      window.clearTimeout(timeoutId);
+    };
   }, [loadUser]);
 
   const login = useCallback(

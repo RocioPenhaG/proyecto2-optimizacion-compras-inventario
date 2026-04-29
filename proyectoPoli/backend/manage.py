@@ -6,6 +6,8 @@ import sys
 
 def main():
     """Run administrative tasks."""
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        os.environ.setdefault("DJANGO_SECRET_KEY", "django-tests-only-secret-not-for-production")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     try:
         from django.core.management import execute_from_command_line

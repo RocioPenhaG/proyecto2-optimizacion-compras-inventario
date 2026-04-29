@@ -10,4 +10,5 @@ urlpatterns = [
     path("etl/status/<str:task_id>/", views.estado_corrida),
     path("etl/corridas/", views.ultimas_corridas),
     path("etl/corridas/<int:corrida_id>/tendencias/", views.tendencias_por_corrida),
+    path("etl/tendencias/<int:tendencia_id>/visual/", views.detalle_visual_tendencia),
 ]

@@ -1,3 +1,4 @@
+import { apiErrorMessage } from "@/utils/apiFetch";
 const API_BASE = "/api";
 
 export interface LoginResponse {
@@ -51,20 +52,152 @@ export async function login(username: string, password: string): Promise<LoginRe
   return res.json();
 }
 
-export async function refreshToken(refresh: string): Promise<{ access: string }> {
+export async function refreshToken(
+  refresh: string,
+  init?: RequestInit,
+): Promise<{ access: string }> {
   const res = await fetch(`${API_BASE}/auth/refresh/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh }),
+    ...init,
   });
-  if (!res.ok) throw new Error("Sesión expirada");
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "Sesión expirada"));
   return res.json();
 }
 
-export async function getMe(accessToken: string): Promise<User> {
+export async function getMe(accessToken: string, init?: RequestInit): Promise<User> {
   const res = await fetch(`${API_BASE}/auth/me/`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    ...init,
   });
-  if (!res.ok) throw new Error("No autorizado");
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "No autorizado"));
+  return res.json();
+}
+
+export interface CorridaAnalytics {
+  id: number;
+  task_id: string | null;
+  estado: string;
+  fecha_ejecucion: string;
+  queued_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  registros_procesados: number;
+  puntos_usados: number;
+  mensaje: string;
+  error_detalle: string;
+  resultados_tendencia_count: number;
+}
+
+export interface CorridasResponse {
+  count: number;
+  results: CorridaAnalytics[];
+}
+
+export interface EstadoCorridaResponse {
+  task_id: string | null;
+  estado: string;
+  queued_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  registros_procesados: number;
+  puntos_usados: number;
+  mensaje: string;
+  error_detalle: string;
+  resultados_tendencia_count: number;
+}
+
+export interface TendenciaLinealItem {
+  id: number;
+  producto_id: number;
+  producto_nombre: string;
+  producto_sku: string;
+  periodicidad: string;
+  puntos_usados: number;
+  pendiente: number;
+  intercepto: number;
+  r2: number | null;
+  mae: number | null;
+  rmse: number | null;
+  prediccion_siguiente: number;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+
+export interface TendenciasCorridaResponse {
+  corrida_id: number;
+  task_id: string | null;
+  count: number;
+  results: TendenciaLinealItem[];
+}
+
+export interface TendenciaVisualPuntoHistorico {
+  fecha: string;
+  consumo: number;
+}
+
+export interface TendenciaVisualPuntoLinea {
+  fecha: string;
+  valor: number;
+}
+
+export interface TendenciaVisualPrediccion {
+  fecha: string;
+  valor: number;
+}
+
+export interface TendenciaVisualResponse {
+  id: number;
+  corrida_id: number;
+  producto_id: number;
+  producto: string;
+  sku: string;
+  periodicidad: string;
+  historico: TendenciaVisualPuntoHistorico[];
+  tendencia: TendenciaVisualPuntoLinea[];
+  prediccion: TendenciaVisualPrediccion;
+  detail?: string;
+}
+
+export async function getAnalyticsCorridas(accessToken: string, limit = 10): Promise<CorridasResponse> {
+  const safeLimit = Math.max(1, Math.min(limit, 20));
+  const res = await fetch(`${API_BASE}/analytics/etl/corridas/?limit=${safeLimit}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Error al cargar corridas ETL (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsCorridaStatus(
+  accessToken: string,
+  taskId: string,
+): Promise<EstadoCorridaResponse> {
+  const res = await fetch(`${API_BASE}/analytics/etl/status/${encodeURIComponent(taskId)}/`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Error al consultar estado ETL (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsCorridaTendencias(
+  accessToken: string,
+  corridaId: number,
+): Promise<TendenciasCorridaResponse> {
+  const res = await fetch(`${API_BASE}/analytics/etl/corridas/${corridaId}/tendencias/`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Error al consultar tendencias (${res.status})`);
+  return res.json();
+}
+
+export async function getAnalyticsTendenciaVisual(
+  accessToken: string,
+  tendenciaId: number,
+): Promise<TendenciaVisualResponse> {
+  const res = await fetch(`${API_BASE}/analytics/etl/tendencias/${tendenciaId}/visual/`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(`Error al consultar detalle visual (${res.status})`);
   return res.json();
 }

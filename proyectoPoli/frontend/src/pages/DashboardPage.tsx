@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAccessToken } from "@/contexts/AuthContext";
 import { HabitosConsumoSection } from "@/components/HabitosConsumoSection";
+import { AnalyticsCorridasSection } from "@/components/AnalyticsCorridasSection";
 import { apiErrorMessage } from "@/utils/apiFetch";
 
 const API_DASHBOARD = "/api/dashboard/";
@@ -146,6 +147,7 @@ export function DashboardPage() {
       </div>
 
       <HabitosConsumoSection token={token} desde={desde} hasta={hasta} />
+      <AnalyticsCorridasSection token={token} />
     </div>
   );
 }

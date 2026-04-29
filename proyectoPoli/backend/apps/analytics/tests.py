@@ -1,6 +1,7 @@
 """Tests para el módulo analytics (ETL, resumen mensual, API hábitos)."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.utils import timezone
@@ -148,6 +149,37 @@ class ETLTestCase(TestCase):
         self.assertEqual(resultado.puntos_usados, 3)
         self.assertAlmostEqual(float(resultado.pendiente), 10.0, places=5)
 
+    def test_etl_solo_fecha_desde_no_borra_hechos_anteriores(self):
+        """Solo fecha_desde: borrar hechos con fecha >= corte; conservar fechas anteriores."""
+        corte = date(2026, 3, 10)
+        anterior = corte - timedelta(days=5)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=anterior, tipo_movimiento="OUT", cantidad_total=42
+        )
+        self._crear_mov_stock_con_fecha(
+            self.p, "OUT", 5, timezone.make_aware(datetime(2026, 3, 10, 12, 0, 0))
+        )
+        ejecutar_etl_analitico(fecha_desde=corte, fecha_hasta=None)
+        h_ant = HechoConsumo.objects.get(producto=self.p, fecha=anterior, tipo_movimiento="OUT")
+        self.assertEqual(h_ant.cantidad_total, 42)
+        h_corte = HechoConsumo.objects.get(producto=self.p, fecha=corte, tipo_movimiento="OUT")
+        self.assertEqual(h_corte.cantidad_total, 5)
+
+    def test_etl_solo_fecha_hasta_no_borra_hechos_posteriores(self):
+        """Solo fecha_hasta: borrar hechos con fecha <= corte; conservar fechas posteriores."""
+        corte = date(2026, 4, 10)
+        posterior = corte + timedelta(days=5)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=posterior, tipo_movimiento="OUT", cantidad_total=99
+        )
+        self._crear_mov_stock_con_fecha(
+            self.p, "OUT", 7, timezone.make_aware(datetime(2026, 4, 8, 10, 0, 0))
+        )
+        ejecutar_etl_analitico(fecha_desde=None, fecha_hasta=corte)
+        h_post = HechoConsumo.objects.get(producto=self.p, fecha=posterior, tipo_movimiento="OUT")
+        self.assertEqual(h_post.cantidad_total, 99)
+        h_mov = HechoConsumo.objects.get(producto=self.p, fecha=date(2026, 4, 8), tipo_movimiento="OUT")
+        self.assertEqual(h_mov.cantidad_total, 7)
 
 
 class AnalyticsAPITestCase(TestCase):
@@ -166,3 +198,160 @@ class AnalyticsAPITestCase(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("consumo_mensual", resp.json())
         self.assertIn("filtro_desde", resp.json())
+
+
+class AnalyticsCorridaETLTestCase(TestCase):
+    """Encolado D-1, estado por task_id y permisos de corridas."""
+
+    def setUp(self):
+        self.gerencia = User.objects.create_user(username="gerencia", password="x", role=Role.GERENCIA)
+        self.compras = User.objects.create_user(username="compras2", password="x", role=Role.COMPRAS)
+        self.funcionario = User.objects.create_user(username="func", password="x", role=Role.FUNCIONARIO)
+        self.client = APIClient()
+
+    @patch("apps.analytics.views.run_etl_analitico_d1.apply_async")
+    def test_run_d1_crea_corrida_queued_antes_de_worker(self, mock_apply):
+        self.client.force_authenticate(user=self.gerencia)
+        resp = self.client.post("/api/analytics/etl/run-d1/")
+        self.assertEqual(resp.status_code, 202)
+        body = resp.json()
+        task_id = body["task_id"]
+        self.assertEqual(body["status"], "QUEUED")
+        mock_apply.assert_called_once()
+        self.assertEqual(mock_apply.call_args.kwargs.get("task_id"), task_id)
+        corrida = CorridaAnalitica.objects.get(task_id=task_id)
+        self.assertEqual(corrida.estado, CorridaAnalitica.Estado.QUEUED)
+        self.assertEqual(corrida.metodo, CorridaAnalitica.Metodo.API)
+        self.assertIsNotNone(corrida.queued_at)
+
+    @patch("apps.analytics.views.run_etl_analitico_d1.apply_async")
+    def test_estado_corrida_no_404_mientras_queued(self, _mock_apply):
+        self.client.force_authenticate(user=self.gerencia)
+        resp = self.client.post("/api/analytics/etl/run-d1/")
+        task_id = resp.json()["task_id"]
+        st = self.client.get(f"/api/analytics/etl/status/{task_id}/")
+        self.assertEqual(st.status_code, 200)
+        self.assertEqual(st.json()["estado"], CorridaAnalitica.Estado.QUEUED)
+        self.assertEqual(st.json()["task_id"], task_id)
+
+    def test_corridas_endpoints_permisos(self):
+        """Solo Gerencia y Administrador gestionan corridas; Compras/Funcionario reciben 403."""
+        corrida = CorridaAnalitica.objects.create(
+            task_id="manual-test-id",
+            estado=CorridaAnalitica.Estado.QUEUED,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        for user, expect_post, expect_status_list in (
+            (self.funcionario, 403, 403),
+            (self.compras, 403, 403),
+        ):
+            self.client.force_authenticate(user=user)
+            self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, expect_post)
+            self.assertEqual(
+                self.client.get(f"/api/analytics/etl/status/{corrida.task_id}/").status_code,
+                expect_status_list,
+            )
+            self.assertEqual(self.client.get("/api/analytics/etl/corridas/").status_code, expect_status_list)
+
+    def test_tendencias_corrida_permite_compras(self):
+        """Listado de tendencias usa puede_ver_analytics (Compras sí)."""
+        corrida = CorridaAnalitica.objects.create(
+            task_id="tend-test",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        self.client.force_authenticate(user=self.compras)
+        r = self.client.get(f"/api/analytics/etl/corridas/{corrida.id}/tendencias/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["corrida_id"], corrida.id)
+
+    def test_tendencias_corrida_funcionario_403(self):
+        corrida = CorridaAnalitica.objects.create(
+            task_id="tend-func",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        self.client.force_authenticate(user=self.funcionario)
+        self.assertEqual(
+            self.client.get(f"/api/analytics/etl/corridas/{corrida.id}/tendencias/").status_code,
+            403,
+        )
+
+    def test_detalle_visual_tendencia_ok(self):
+        producto = Producto.objects.create(sku="DET-001", nombre="Det", stock_minimo=0)
+        corrida = CorridaAnalitica.objects.create(
+            task_id="tend-visual",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        HechoConsumo.objects.create(
+            producto=producto,
+            fecha=date(2026, 4, 24),
+            tipo_movimiento="OUT",
+            cantidad_total=12,
+        )
+        HechoConsumo.objects.create(
+            producto=producto,
+            fecha=date(2026, 4, 25),
+            tipo_movimiento="OUT",
+            cantidad_total=15,
+        )
+        tendencia = ResultadoTendenciaLineal.objects.create(
+            corrida=corrida,
+            producto=producto,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 4, 24),
+            fecha_fin=date(2026, 4, 25),
+            puntos_usados=2,
+            pendiente=Decimal("3.000000"),
+            intercepto=Decimal("12.000000"),
+            r2=Decimal("1.000000"),
+            mae=Decimal("0.000000"),
+            rmse=Decimal("0.000000"),
+            prediccion_siguiente=Decimal("18.000000"),
+            metadata={},
+        )
+        self.client.force_authenticate(user=self.compras)
+        resp = self.client.get(f"/api/analytics/etl/tendencias/{tendencia.id}/visual/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["producto"], producto.nombre)
+        self.assertEqual(body["sku"], producto.sku)
+        self.assertEqual(len(body["historico"]), 2)
+        self.assertEqual(len(body["tendencia"]), 2)
+        self.assertEqual(body["prediccion"]["fecha"], "2026-04-26")
+        self.assertEqual(body["prediccion"]["valor"], 18.0)
+
+    def test_detalle_visual_tendencia_funcionario_403(self):
+        corrida = CorridaAnalitica.objects.create(
+            task_id="tend-visual-403",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        producto = Producto.objects.create(sku="DET-002", nombre="Det2", stock_minimo=0)
+        tendencia = ResultadoTendenciaLineal.objects.create(
+            corrida=corrida,
+            producto=producto,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 4, 24),
+            fecha_fin=date(2026, 4, 25),
+            puntos_usados=2,
+            pendiente=Decimal("1.000000"),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("1.000000"),
+            mae=Decimal("0.000000"),
+            rmse=Decimal("0.000000"),
+            prediccion_siguiente=Decimal("12.000000"),
+            metadata={},
+        )
+        self.client.force_authenticate(user=self.funcionario)
+        resp = self.client.get(f"/api/analytics/etl/tendencias/{tendencia.id}/visual/")
+        self.assertEqual(resp.status_code, 403)
+
+    @patch("apps.analytics.views.run_etl_analitico_d1.apply_async")
+    def test_run_d1_permite_administrador(self, _mock_apply):
+        admin = User.objects.create_superuser(username="admin_etl", email="a@a.com", password="x")
+        self.client.force_authenticate(user=admin)
+        self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, 202)

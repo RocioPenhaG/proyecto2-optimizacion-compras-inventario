@@ -2,7 +2,7 @@
  * Sección "Hábitos de consumo" del dashboard (Release 2).
  * Consume /api/analytics/habitos-resumen/ y muestra gráficos y tablas.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -81,12 +81,8 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
   }, [token, desde, hasta]);
-
-  if (loading) return <p className="text-sm text-gray-500">Cargando hábitos de consumo...</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
-  if (!data) return null;
-
-  const { consumo_mensual, consumo_por_dia_semana } = data;
+  const consumo_mensual = data?.consumo_mensual ?? [];
+  const consumo_por_dia_semana = data?.consumo_por_dia_semana ?? [];
 
   // Agrupar consumo mensual por (anio-mes) para el gráfico de barras (suma de todos los productos o por producto)
   const labelsMensual = Array.from(
@@ -99,29 +95,37 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
     return total;
   });
 
-  const chartMensual = {
-    labels: labelsMensual,
-    datasets: [
-      {
-        label: "Consumo total (salidas)",
-        data: porMes,
-        backgroundColor: "rgba(59, 130, 246, 0.6)",
-        borderColor: "rgb(59, 130, 246)",
-        borderWidth: 1,
-      },
-    ],
-  };
+  const chartMensual = useMemo(
+    () => ({
+      labels: labelsMensual,
+      datasets: [
+        {
+          label: "Consumo total (salidas)",
+          data: porMes,
+          backgroundColor: "rgba(59, 130, 246, 0.6)",
+          borderColor: "rgb(59, 130, 246)",
+          borderWidth: 1,
+        },
+      ],
+    }),
+    [labelsMensual, porMes],
+  );
 
-  const optsMensual = {
-    responsive: true,
-    plugins: {
-      legend: { position: "top" as const },
-      title: { display: true, text: "Consumo mensual (total por mes)" },
-    },
-    scales: {
-      y: { beginAtZero: true },
-    },
-  };
+  const optsMensual = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false as const,
+      plugins: {
+        legend: { position: "top" as const },
+        title: { display: true, text: "Consumo mensual (total por mes)" },
+      },
+      scales: {
+        y: { beginAtZero: true },
+      },
+    }),
+    [],
+  );
 
   // Por día de semana: agregar por dia_semana (1=Dom en Django ExtractWeekDay)
   const porDiaSemana = [1, 2, 3, 4, 5, 6, 7].map((d) => {
@@ -131,29 +135,37 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
     return total;
   });
 
-  const chartDiaSemana = {
-    labels: DIAS_SEMANA,
-    datasets: [
-      {
-        label: "Consumo por día de la semana",
-        data: porDiaSemana,
-        backgroundColor: "rgba(34, 197, 94, 0.6)",
-        borderColor: "rgb(34, 197, 94)",
-        borderWidth: 1,
-      },
-    ],
-  };
+  const chartDiaSemana = useMemo(
+    () => ({
+      labels: DIAS_SEMANA,
+      datasets: [
+        {
+          label: "Consumo por día de la semana",
+          data: porDiaSemana,
+          backgroundColor: "rgba(34, 197, 94, 0.6)",
+          borderColor: "rgb(34, 197, 94)",
+          borderWidth: 1,
+        },
+      ],
+    }),
+    [porDiaSemana],
+  );
 
-  const optsDiaSemana = {
-    responsive: true,
-    plugins: {
-      legend: { position: "top" as const },
-      title: { display: true, text: "Consumo por día de la semana" },
-    },
-    scales: {
-      y: { beginAtZero: true },
-    },
-  };
+  const optsDiaSemana = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false as const,
+      plugins: {
+        legend: { position: "top" as const },
+        title: { display: true, text: "Consumo por día de la semana" },
+      },
+      scales: {
+        y: { beginAtZero: true },
+      },
+    }),
+    [],
+  );
 
   // Tabla: consumo mensual por producto (agrupar por producto, mostrar filas producto + meses)
   const productosUnicos = Array.from(
@@ -169,19 +181,26 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Hábitos de consumo</h3>
-      <p className="text-sm text-gray-500">
-        Período: {data.filtro_desde} — {data.filtro_hasta}
-      </p>
+      {loading && <p className="text-sm text-gray-500">Cargando hábitos de consumo...</p>}
+      {!loading && error && <p className="text-sm text-red-500">{error}</p>}
+      {!loading && !error && data && (
+        <p className="text-sm text-gray-500">
+          Período: {data.filtro_desde} — {data.filtro_hasta}
+        </p>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-4">
-          <Bar data={chartMensual} options={optsMensual} />
+      {!loading && !error && data && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg shadow p-4 h-80">
+            <Bar data={chartMensual} options={optsMensual} />
+          </div>
+          <div className="bg-white rounded-lg shadow p-4 h-80">
+            <Bar data={chartDiaSemana} options={optsDiaSemana} />
+          </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <Bar data={chartDiaSemana} options={optsDiaSemana} />
-        </div>
-      </div>
+      )}
 
+      {!loading && !error && data && (
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <h4 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">
           Consumo por producto (resumen en el período)
@@ -217,8 +236,9 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
           </tbody>
         </table>
       </div>
+      )}
 
-      {consumo_mensual.length > 0 && (
+      {!loading && !error && data && consumo_mensual.length > 0 && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <h4 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">
             Detalle consumo mensual por producto

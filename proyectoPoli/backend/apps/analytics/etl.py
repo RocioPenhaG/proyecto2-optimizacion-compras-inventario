@@ -152,14 +152,16 @@ def ejecutar_etl_analitico(fecha_desde=None, fecha_hasta=None, corrida=None, ten
             agg[key] += m.cantidad
 
         with transaction.atomic():
-            # Reemplazar hechos en el rango procesado (o todos si no hay filtro)
-            if fecha_desde and fecha_hasta:
-                HechoConsumo.objects.filter(
-                    fecha__gte=fecha_desde,
-                    fecha__lte=fecha_hasta,
-                ).delete()
-            else:
-                HechoConsumo.objects.all().delete()
+            # Borrar solo hechos del rango afectado (rangos abiertos: solo desde / solo hasta).
+            # Sin ninguna fecha: reprocesar todo el universo (reemplazo completo).
+            hc_delete = HechoConsumo.objects.all()
+            if fecha_desde is not None and fecha_hasta is not None:
+                hc_delete = hc_delete.filter(fecha__gte=fecha_desde, fecha__lte=fecha_hasta)
+            elif fecha_desde is not None:
+                hc_delete = hc_delete.filter(fecha__gte=fecha_desde)
+            elif fecha_hasta is not None:
+                hc_delete = hc_delete.filter(fecha__lte=fecha_hasta)
+            hc_delete.delete()
 
             bulk = []
             for (producto_id, fecha, tipo), cantidad in agg.items():

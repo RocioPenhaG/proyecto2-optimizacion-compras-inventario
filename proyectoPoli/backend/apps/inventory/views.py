@@ -25,3 +25,10 @@ class MovStockViewSet(viewsets.ModelViewSet):
     queryset = MovStock.objects.select_related("producto", "usuario").all().order_by("-fecha")
     serializer_class = MovStockSerializer
     permission_classes = [IsAuthenticated, IsNotFuncionario]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        orden_fecha = self.request.query_params.get("orden_fecha", "desc").strip().lower()
+        if orden_fecha == "asc":
+            return queryset.order_by("fecha")
+        return queryset.order_by("-fecha")

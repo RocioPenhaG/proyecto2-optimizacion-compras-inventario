@@ -28,47 +28,27 @@ def ping_analytics():
 def run_etl_analitico_d1(self):
     """
     Ejecuta el ETL analítico para el día anterior (D-1).
-    Pensado para ser invocado por Celery Beat (ej. diario a las 02:00).
+    Invocado desde la API (CorridaAnalitica ya creada en QUEUED con task_id) o desde
+    Celery Beat (crea la fila QUEUED aquí si no existía).
     """
     ayer = (timezone.now() - timedelta(days=1)).date()
     task_id = getattr(self.request, "id", None)
 
-    defaults = {
-        "estado": CorridaAnalitica.Estado.QUEUED,
-        "queued_at": timezone.now(),
-        "metodo": CorridaAnalitica.Metodo.SCHEDULED,
-        "fecha_desde": ayer,
-        "fecha_hasta": ayer,
-        "parametros": {"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"},
-        "mensaje": "Ejecucion encolada desde Celery.",
-    }
-    if task_id:
-        corrida, creada = CorridaAnalitica.objects.get_or_create(task_id=task_id, defaults=defaults)
-        if not creada:
-            corrida.estado = CorridaAnalitica.Estado.QUEUED
-            corrida.queued_at = timezone.now()
-            corrida.metodo = CorridaAnalitica.Metodo.SCHEDULED
-            corrida.fecha_desde = ayer
-            corrida.fecha_hasta = ayer
-            corrida.parametros = {"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"}
-            corrida.mensaje = "Ejecucion encolada desde Celery."
-            corrida.error_detalle = ""
-            corrida.finished_at = None
-            corrida.save(
-                update_fields=[
-                    "estado",
-                    "queued_at",
-                    "metodo",
-                    "fecha_desde",
-                    "fecha_hasta",
-                    "parametros",
-                    "mensaje",
-                    "error_detalle",
-                    "finished_at",
-                ]
-            )
-    else:
-        corrida = CorridaAnalitica.objects.create(**defaults)
+    corrida = CorridaAnalitica.objects.filter(task_id=task_id).first() if task_id else None
+    if corrida is None:
+        defaults = {
+            "estado": CorridaAnalitica.Estado.QUEUED,
+            "queued_at": timezone.now(),
+            "metodo": CorridaAnalitica.Metodo.SCHEDULED,
+            "fecha_desde": ayer,
+            "fecha_hasta": ayer,
+            "parametros": {"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"},
+            "mensaje": "Ejecución encolada desde Celery.",
+        }
+        if task_id:
+            corrida = CorridaAnalitica.objects.create(task_id=task_id, **defaults)
+        else:
+            corrida = CorridaAnalitica.objects.create(**defaults)
 
     corrida = ejecutar_etl_analitico(fecha_desde=ayer, fecha_hasta=ayer, corrida=corrida)
     return {"estado": corrida.estado, "registros": corrida.registros_procesados, "fecha": str(ayer)}

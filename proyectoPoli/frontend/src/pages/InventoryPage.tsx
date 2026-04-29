@@ -24,6 +24,7 @@ export function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ordenFecha, setOrdenFecha] = useState<"desc" | "asc">("desc");
 
   // Estados Modal
   const [showModal, setShowModal] = useState(false);
@@ -38,8 +39,10 @@ export function InventoryPage() {
   const fetchData = async () => {
     if (!token) return;
     try {
+      setError(null);
+      const movsUrl = `/api/inventory/movimientos/?orden_fecha=${ordenFecha}`;
       const [resMov, resProd] = await Promise.all([
-        fetch("/api/inventory/movimientos/", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(movsUrl, { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/products/productos/", { headers: { Authorization: `Bearer ${token}` } })
       ]);
       
@@ -56,7 +59,7 @@ export function InventoryPage() {
 
   useEffect(() => {
     fetchData();
-  }, [token]);
+  }, [token, ordenFecha]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,12 +102,28 @@ export function InventoryPage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-800">Movimientos de Inventario</h2>
-        <button 
-          onClick={() => setShowModal(true)}
-          className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition"
-        >
-          Registrar Movimiento
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="orden-fecha" className="text-sm text-gray-600">
+              Ordenar por:
+            </label>
+            <select
+              id="orden-fecha"
+              value={ordenFecha}
+              onChange={(e) => setOrdenFecha((e.target.value as "asc" | "desc"))}
+              className="rounded border border-gray-300 text-sm p-2 bg-white"
+            >
+              <option value="desc">Más recientes primero</option>
+              <option value="asc">Más antiguos primero</option>
+            </select>
+          </div>
+          <button 
+            onClick={() => setShowModal(true)}
+            className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition"
+          >
+            Registrar Movimiento
+          </button>
+        </div>
       </div>
 
       <div className="bg-white shadow overflow-hidden sm:rounded-lg">

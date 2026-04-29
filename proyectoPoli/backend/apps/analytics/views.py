@@ -1,6 +1,7 @@
 """
 API de hábitos de consumo (Release 2). Mismos permisos que dashboard: Compras, Gerencia, Contable, Admin.
 """
+import uuid
 from datetime import datetime, timedelta
 
 from django.db.models import Q, Sum, Count, Min, Max, Avg
@@ -290,11 +291,25 @@ def ejecutar_etl_d1(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    async_result = run_etl_analitico_d1.delay()
+    ayer = (timezone.now() - timedelta(days=1)).date()
+    task_id = str(uuid.uuid4())
+    CorridaAnalitica.objects.create(
+        task_id=task_id,
+        estado=CorridaAnalitica.Estado.QUEUED,
+        queued_at=timezone.now(),
+        metodo=CorridaAnalitica.Metodo.API,
+        fecha_desde=ayer,
+        fecha_hasta=ayer,
+        parametros={"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"},
+        mensaje="Ejecución encolada desde API.",
+        error_detalle="",
+        ejecutado_por=request.user,
+    )
+    run_etl_analitico_d1.apply_async(task_id=task_id)
     return Response(
         {
             "message": "Corrida ETL D-1 encolada correctamente.",
-            "task_id": async_result.id,
+            "task_id": task_id,
             "status": "QUEUED",
         },
         status=status.HTTP_202_ACCEPTED,
@@ -305,7 +320,7 @@ def ejecutar_etl_d1(request):
 @permission_classes([IsAuthenticated])
 def estado_corrida(request, task_id):
     """Consulta estado y métricas de una corrida por task_id."""
-    if not puede_gestionar_corridas(request.user):
+    if not puede_ver_analytics(request.user):
         return Response(
             {"detail": "No tiene permiso para consultar corridas analíticas."},
             status=status.HTTP_403_FORBIDDEN,
@@ -339,7 +354,7 @@ def estado_corrida(request, task_id):
 @permission_classes([IsAuthenticated])
 def ultimas_corridas(request):
     """Lista últimas corridas (default 10, máximo 20)."""
-    if not puede_gestionar_corridas(request.user):
+    if not puede_ver_analytics(request.user):
         return Response(
             {"detail": "No tiene permiso para consultar corridas analíticas."},
             status=status.HTTP_403_FORBIDDEN,
@@ -415,3 +430,66 @@ def tendencias_por_corrida(request, corrida_id):
         for r in resultados
     ]
     return Response({"corrida_id": corrida.id, "task_id": corrida.task_id, "count": len(data), "results": data})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def detalle_visual_tendencia(request, tendencia_id):
+    """Devuelve serie histórica, línea de tendencia y predicción siguiente para una tendencia."""
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ver analytics."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        tendencia = ResultadoTendenciaLineal.objects.select_related("producto").get(id=tendencia_id)
+    except ResultadoTendenciaLineal.DoesNotExist:
+        return Response(
+            {"detail": "No existe la tendencia solicitada."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    historico_qs = (
+        HechoConsumo.objects.filter(
+            producto_id=tendencia.producto_id,
+            tipo_movimiento="OUT",
+            fecha__gte=tendencia.fecha_inicio,
+            fecha__lte=tendencia.fecha_fin,
+        )
+        .values("fecha")
+        .annotate(consumo=Sum("cantidad_total"))
+        .order_by("fecha")
+    )
+    historico_rows = list(historico_qs)
+    historico = [{"fecha": row["fecha"], "consumo": float(row["consumo"])} for row in historico_rows]
+    tendencia_estimacion = [
+        {
+            "fecha": row["fecha"],
+            "valor": float(tendencia.intercepto) + (float(tendencia.pendiente) * idx),
+        }
+        for idx, row in enumerate(historico_rows)
+    ]
+
+    if tendencia.periodicidad == "DAILY":
+        fecha_prediccion = tendencia.fecha_fin + timedelta(days=1)
+    else:
+        fecha_prediccion = tendencia.fecha_fin + timedelta(days=1)
+
+    data = {
+        "id": tendencia.id,
+        "corrida_id": tendencia.corrida_id,
+        "producto_id": tendencia.producto_id,
+        "producto": tendencia.producto.nombre,
+        "sku": tendencia.producto.sku,
+        "periodicidad": tendencia.periodicidad,
+        "historico": historico,
+        "tendencia": tendencia_estimacion,
+        "prediccion": {
+            "fecha": fecha_prediccion,
+            "valor": float(tendencia.prediccion_siguiente),
+        },
+    }
+    if len(historico) < 2:
+        data["detail"] = "No hay datos suficientes para visualizar la tendencia."
+    return Response(data)
