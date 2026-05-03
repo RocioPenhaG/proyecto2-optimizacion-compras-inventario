@@ -79,7 +79,10 @@ export interface CorridaAnalytics {
   id: number;
   task_id: string | null;
   estado: string;
+  metodo?: string;
   fecha_ejecucion: string;
+  fecha_desde?: string | null;
+  fecha_hasta?: string | null;
   queued_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -88,6 +91,37 @@ export interface CorridaAnalytics {
   mensaje: string;
   error_detalle: string;
   resultados_tendencia_count: number;
+  /** Productos con OUT en la ventana de tendencia (null si aún no aplica o no se puede inferir). */
+  productos_candidatos_tendencia: number | null;
+}
+
+export interface ResumenConsumoResponse {
+  total_salidas: number;
+  productos_distintos: number;
+  dias_con_consumo: number;
+  promedio_diario_periodo: number;
+  filas_hecho_consumo: number;
+  meses_con_resumen_mensual: number;
+  filtro_desde: string;
+  filtro_hasta: string;
+}
+
+export interface TopProductoConsumido {
+  producto_id: number;
+  producto_sku: string;
+  producto_nombre: string;
+  cantidad_total: number;
+}
+
+export interface TopProductosConsumidosResponse {
+  top_productos: TopProductoConsumido[];
+  filtro_desde: string;
+  filtro_hasta: string;
+  limit: number;
+}
+
+export interface UltimaCorridaResponse {
+  corrida: CorridaAnalytics | null;
 }
 
 export interface CorridasResponse {
@@ -106,6 +140,7 @@ export interface EstadoCorridaResponse {
   mensaje: string;
   error_detalle: string;
   resultados_tendencia_count: number;
+  productos_candidatos_tendencia: number | null;
 }
 
 export interface TendenciaLinealItem {
@@ -158,6 +193,46 @@ export interface TendenciaVisualResponse {
   tendencia: TendenciaVisualPuntoLinea[];
   prediccion: TendenciaVisualPrediccion;
   detail?: string;
+}
+
+export async function getAnalyticsResumenConsumo(
+  accessToken: string,
+  desde?: string,
+  hasta?: string,
+): Promise<ResumenConsumoResponse> {
+  const params = new URLSearchParams();
+  if (desde) params.set("desde", desde);
+  if (hasta) params.set("hasta", hasta);
+  const q = params.toString();
+  const res = await fetch(`${API_BASE}/analytics/resumen-consumo/${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar resumen de consumo"));
+  return res.json();
+}
+
+export async function getAnalyticsTopProductosConsumidos(
+  accessToken: string,
+  options?: { desde?: string; hasta?: string; limit?: number },
+): Promise<TopProductosConsumidosResponse> {
+  const params = new URLSearchParams();
+  if (options?.desde) params.set("desde", options.desde);
+  if (options?.hasta) params.set("hasta", options.hasta);
+  if (options?.limit != null) params.set("limit", String(Math.min(50, Math.max(1, options.limit))));
+  const q = params.toString();
+  const res = await fetch(`${API_BASE}/analytics/top-productos-consumidos/${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar top productos consumidos"));
+  return res.json();
+}
+
+export async function getAnalyticsUltimaCorrida(accessToken: string): Promise<UltimaCorridaResponse> {
+  const res = await fetch(`${API_BASE}/analytics/ultima-corrida/`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar última corrida"));
+  return res.json();
 }
 
 export async function getAnalyticsCorridas(accessToken: string, limit = 10): Promise<CorridasResponse> {

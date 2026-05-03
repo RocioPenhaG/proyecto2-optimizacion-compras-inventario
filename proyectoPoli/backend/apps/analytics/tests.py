@@ -1,9 +1,9 @@
 """Tests para el módulo analytics (ETL, resumen mensual, API hábitos)."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -12,7 +12,7 @@ from apps.inventory.models import MovStock
 from apps.users.models import User, Role
 
 from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
-from .etl import ejecutar_etl_analitico, actualizar_resumen_consumo_mensual
+from .etl import ejecutar_etl_analitico, actualizar_resumen_consumo_mensual, _fecha_mov_local
 
 
 class ETLTestCase(TestCase):
@@ -113,6 +113,8 @@ class ETLTestCase(TestCase):
         self._crear_mov_stock_con_fecha(self.p, "OUT", 30, ref)
 
         corrida = ejecutar_etl_analitico()
+        corrida.refresh_from_db()
+        self.assertEqual(corrida.productos_candidatos_tendencia, 1)
 
         resultado = ResultadoTendenciaLineal.objects.get(corrida=corrida, producto=self.p)
         self.assertEqual(resultado.corrida_id, corrida.id)
@@ -127,7 +129,8 @@ class ETLTestCase(TestCase):
         self._crear_mov_stock_con_fecha(self.p, "OUT", 20, ref)
 
         corrida = ejecutar_etl_analitico()
-
+        corrida.refresh_from_db()
+        self.assertEqual(corrida.productos_candidatos_tendencia, 1)
         self.assertEqual(
             ResultadoTendenciaLineal.objects.filter(corrida=corrida, producto=self.p).count(),
             0,
@@ -181,6 +184,52 @@ class ETLTestCase(TestCase):
         h_mov = HechoConsumo.objects.get(producto=self.p, fecha=date(2026, 4, 8), tipo_movimiento="OUT")
         self.assertEqual(h_mov.cantidad_total, 7)
 
+    @override_settings(TIME_ZONE="America/Argentina/Buenos_Aires", USE_TZ=True)
+    def test_etl_idempotente_mismo_dia_varios_movimientos(self):
+        """Reprocesar el mismo rango no debe violar unique ni duplicar filas en HechoConsumo."""
+        timezone.activate("America/Argentina/Buenos_Aires")
+        d = date(2026, 4, 28)
+        for minute in range(10):
+            self._crear_mov_stock_con_fecha(
+                self.p, "OUT", 1, timezone.make_aware(datetime(2026, 4, 28, 10, minute, 0))
+            )
+        ejecutar_etl_analitico(fecha_desde=d, fecha_hasta=d)
+        outs = HechoConsumo.objects.filter(producto=self.p, tipo_movimiento="OUT", fecha=d)
+        self.assertEqual(outs.count(), 1)
+        self.assertEqual(outs.get().cantidad_total, 10)
+        ejecutar_etl_analitico(fecha_desde=d, fecha_hasta=d)
+        outs = HechoConsumo.objects.filter(producto=self.p, tipo_movimiento="OUT", fecha=d)
+        self.assertEqual(outs.count(), 1)
+        self.assertEqual(outs.get().cantidad_total, 10)
+
+    @override_settings(TIME_ZONE="America/Argentina/Buenos_Aires", USE_TZ=True)
+    def test_etl_hecho_fecha_local_sin_desfase_por_utc(self):
+        """
+        Movimiento en UTC que cae en calendario local 2026-04-28 (ART) debe agruparse en ese día,
+        no en 2026-04-29 (evita borrado parcial + insert duplicado en segunda corrida).
+        """
+        timezone.activate("America/Argentina/Buenos_Aires")
+        # 2026-04-29 02:00 UTC == 2026-04-28 23:00 ART → día local 28.
+        dt_utc = timezone.make_aware(datetime(2026, 4, 29, 2, 0, 0), datetime_timezone.utc)
+        self._crear_mov_stock_con_fecha(self.p, "OUT", 5, dt_utc)
+        ejecutar_etl_analitico(fecha_desde=date(2026, 4, 28), fecha_hasta=date(2026, 4, 28))
+        h = HechoConsumo.objects.get(producto=self.p, tipo_movimiento="OUT")
+        self.assertEqual(h.fecha, date(2026, 4, 28))
+        self.assertEqual(h.cantidad_total, 5)
+        self.assertFalse(HechoConsumo.objects.filter(producto=self.p, fecha=date(2026, 4, 29)).exists())
+        ejecutar_etl_analitico(fecha_desde=date(2026, 4, 28), fecha_hasta=date(2026, 4, 28))
+        self.assertEqual(
+            HechoConsumo.objects.filter(producto=self.p, tipo_movimiento="OUT", fecha=date(2026, 4, 28)).count(),
+            1,
+        )
+
+    @override_settings(TIME_ZONE="America/Argentina/Buenos_Aires", USE_TZ=True)
+    def test_fecha_mov_local_coherente_con_trunc(self):
+        """_fecha_mov_local alinea con el criterio de día local del ETL."""
+        timezone.activate("America/Argentina/Buenos_Aires")
+        dt_utc = timezone.make_aware(datetime(2026, 4, 29, 2, 0, 0), datetime_timezone.utc)
+        self.assertEqual(_fecha_mov_local(dt_utc), date(2026, 4, 28))
+
 
 class AnalyticsAPITestCase(TestCase):
     def setUp(self):
@@ -198,6 +247,52 @@ class AnalyticsAPITestCase(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("consumo_mensual", resp.json())
         self.assertIn("filtro_desde", resp.json())
+
+    def test_resumen_consumo_desde_hecho(self):
+        ref = date(2026, 8, 10)
+        HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=100)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=ref - timedelta(days=1), tipo_movimiento="OUT", cantidad_total=50
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/resumen-consumo/",
+            {"desde": "2026-08-01", "hasta": "2026-08-31"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["total_salidas"], 150)
+        self.assertEqual(body["productos_distintos"], 1)
+        self.assertEqual(body["dias_con_consumo"], 2)
+
+    def test_top_productos_consumidos(self):
+        p2 = Producto.objects.create(sku="TST-003", nombre="Otro", stock_minimo=0)
+        ref = date(2026, 9, 5)
+        HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=10)
+        HechoConsumo.objects.create(producto=p2, fecha=ref, tipo_movimiento="OUT", cantidad_total=99)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/top-productos-consumidos/",
+            {"desde": "2026-09-01", "hasta": "2026-09-30", "limit": 5},
+        )
+        self.assertEqual(resp.status_code, 200)
+        top = resp.json()["top_productos"]
+        self.assertEqual(len(top), 2)
+        self.assertEqual(top[0]["producto_id"], p2.id)
+        self.assertEqual(top[0]["cantidad_total"], 99)
+
+    def test_ultima_corrida(self):
+        CorridaAnalitica.objects.create(
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            mensaje="ok",
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/analytics/ultima-corrida/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(resp.json()["corrida"])
+        self.assertEqual(resp.json()["corrida"]["estado"], CorridaAnalitica.Estado.SUCCESS)
+        self.assertIn("metodo", resp.json()["corrida"])
 
 
 class AnalyticsCorridaETLTestCase(TestCase):
@@ -235,23 +330,30 @@ class AnalyticsCorridaETLTestCase(TestCase):
         self.assertEqual(st.json()["task_id"], task_id)
 
     def test_corridas_endpoints_permisos(self):
-        """Solo Gerencia y Administrador gestionan corridas; Compras/Funcionario reciben 403."""
+        """
+        Encolar ETL D-1: solo Gerencia/Administrador (403 Compras y Funcionario).
+        Listado y estado de corridas: Compras/Contable/Gerencia/Admin (puede_ver_analytics); Funcionario 403.
+        """
         corrida = CorridaAnalitica.objects.create(
             task_id="manual-test-id",
             estado=CorridaAnalitica.Estado.QUEUED,
             metodo=CorridaAnalitica.Metodo.MANUAL,
         )
-        for user, expect_post, expect_status_list in (
-            (self.funcionario, 403, 403),
-            (self.compras, 403, 403),
-        ):
-            self.client.force_authenticate(user=user)
-            self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, expect_post)
-            self.assertEqual(
-                self.client.get(f"/api/analytics/etl/status/{corrida.task_id}/").status_code,
-                expect_status_list,
-            )
-            self.assertEqual(self.client.get("/api/analytics/etl/corridas/").status_code, expect_status_list)
+        self.client.force_authenticate(user=self.funcionario)
+        self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, 403)
+        self.assertEqual(
+            self.client.get(f"/api/analytics/etl/status/{corrida.task_id}/").status_code,
+            403,
+        )
+        self.assertEqual(self.client.get("/api/analytics/etl/corridas/").status_code, 403)
+
+        self.client.force_authenticate(user=self.compras)
+        self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, 403)
+        self.assertEqual(
+            self.client.get(f"/api/analytics/etl/status/{corrida.task_id}/").status_code,
+            200,
+        )
+        self.assertEqual(self.client.get("/api/analytics/etl/corridas/").status_code, 200)
 
     def test_tendencias_corrida_permite_compras(self):
         """Listado de tendencias usa puede_ver_analytics (Compras sí)."""

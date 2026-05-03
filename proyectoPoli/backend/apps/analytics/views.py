@@ -15,7 +15,17 @@ from rest_framework.response import Response
 from apps.users.models import Role
 from apps.products.models import Producto
 from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
+from .etl import resolver_productos_candidatos_tendencia
 from .tasks import run_etl_analitico_d1
+
+
+def _productos_candidatos_tendencia_para_api(corrida):
+    """Expone total de productos en ventana de tendencia; no infiere en corridas no finalizadas con éxito."""
+    if corrida.productos_candidatos_tendencia is not None:
+        return corrida.productos_candidatos_tendencia
+    if corrida.estado not in (CorridaAnalitica.Estado.SUCCESS, CorridaAnalitica.Estado.OK):
+        return None
+    return resolver_productos_candidatos_tendencia(corrida)
 
 
 def puede_ver_analytics(user):
@@ -41,6 +51,146 @@ def parse_fechas(request):
         return fecha_desde, fecha_hasta
     except ValueError:
         return None, None
+
+
+def _serialize_corrida_resumida(c):
+    """Payload común para listados y última corrida (sin duplicar lógica)."""
+    return {
+        "id": c.id,
+        "task_id": c.task_id,
+        "estado": c.estado,
+        "metodo": c.metodo,
+        "fecha_ejecucion": c.fecha_ejecucion,
+        "queued_at": c.queued_at,
+        "started_at": c.started_at,
+        "finished_at": c.finished_at,
+        "fecha_desde": c.fecha_desde,
+        "fecha_hasta": c.fecha_hasta,
+        "registros_procesados": c.registros_procesados,
+        "puntos_usados": c.puntos_usados,
+        "mensaje": c.mensaje,
+        "error_detalle": c.error_detalle,
+        "resultados_tendencia_count": c.resultados_tendencia.count(),
+        "productos_candidatos_tendencia": _productos_candidatos_tendencia_para_api(c),
+    }
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def resumen_consumo(request):
+    """
+    Indicadores agregados de consumo (salidas OUT) en el período, desde HechoConsumo.
+    No usa MovStock.
+    """
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ver analytics."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    fecha_desde, fecha_hasta = parse_fechas(request)
+    if fecha_desde is None:
+        return Response(
+            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    base = HechoConsumo.objects.filter(
+        tipo_movimiento="OUT",
+        fecha__gte=fecha_desde,
+        fecha__lte=fecha_hasta,
+    )
+    agg = base.aggregate(
+        total_salidas=Sum("cantidad_total"),
+        productos_distintos=Count("producto_id", distinct=True),
+        dias_con_consumo=Count("fecha", distinct=True),
+        filas_hecho=Count("id"),
+    )
+    total = int(agg["total_salidas"] or 0)
+    dias = int(agg["dias_con_consumo"] or 0)
+    promedio = round(total / dias, 2) if dias else 0.0
+
+    qs_rm = ResumenConsumoMensual.objects.filter(
+        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
+        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
+    )
+    meses_cubiertos = qs_rm.values("anio", "mes").distinct().count()
+
+    return Response({
+        "total_salidas": total,
+        "productos_distintos": int(agg["productos_distintos"] or 0),
+        "dias_con_consumo": dias,
+        "promedio_diario_periodo": float(promedio),
+        "filas_hecho_consumo": int(agg["filas_hecho"] or 0),
+        "meses_con_resumen_mensual": meses_cubiertos,
+        "filtro_desde": str(fecha_desde),
+        "filtro_hasta": str(fecha_hasta),
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def top_productos_consumidos(request):
+    """
+    Ranking de productos por cantidad consumida (OUT) en el período, desde HechoConsumo.
+    Query: desde, hasta, limit (default 10, máx. 50).
+    """
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ver analytics."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    fecha_desde, fecha_hasta = parse_fechas(request)
+    if fecha_desde is None:
+        return Response(
+            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        limit = int(request.query_params.get("limit", 10))
+    except (TypeError, ValueError):
+        return Response({"detail": "Parámetro limit inválido."}, status=status.HTTP_400_BAD_REQUEST)
+    limit = max(1, min(limit, 50))
+
+    rows = (
+        HechoConsumo.objects.filter(
+            tipo_movimiento="OUT",
+            fecha__gte=fecha_desde,
+            fecha__lte=fecha_hasta,
+        )
+        .values("producto_id", "producto__sku", "producto__nombre")
+        .annotate(cantidad_total=Sum("cantidad_total"))
+        .order_by("-cantidad_total")[:limit]
+    )
+    data = [
+        {
+            "producto_id": r["producto_id"],
+            "producto_sku": r["producto__sku"],
+            "producto_nombre": r["producto__nombre"],
+            "cantidad_total": r["cantidad_total"],
+        }
+        for r in rows
+    ]
+    return Response({
+        "top_productos": data,
+        "filtro_desde": str(fecha_desde),
+        "filtro_hasta": str(fecha_hasta),
+        "limit": limit,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def ultima_corrida(request):
+    """Última corrida analítica registrada (por fecha_ejecucion), para panel de estado ETL."""
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para consultar corridas analíticas."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    c = CorridaAnalitica.objects.order_by("-fecha_ejecucion").first()
+    if c is None:
+        return Response({"corrida": None})
+    return Response({"corrida": _serialize_corrida_resumida(c)})
 
 
 @api_view(["GET"])
@@ -319,7 +469,7 @@ def ejecutar_etl_d1(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def estado_corrida(request, task_id):
-    """Consulta estado y métricas de una corrida por task_id."""
+    """Consulta estado y métricas de una corrida por task_id (mismo alcance que visualización analítica)."""
     if not puede_ver_analytics(request.user):
         return Response(
             {"detail": "No tiene permiso para consultar corridas analíticas."},
@@ -346,6 +496,7 @@ def estado_corrida(request, task_id):
             "mensaje": corrida.mensaje,
             "error_detalle": corrida.error_detalle,
             "resultados_tendencia_count": corrida.resultados_tendencia.count(),
+            "productos_candidatos_tendencia": _productos_candidatos_tendencia_para_api(corrida),
         }
     )
 
@@ -353,7 +504,7 @@ def estado_corrida(request, task_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def ultimas_corridas(request):
-    """Lista últimas corridas (default 10, máximo 20)."""
+    """Lista últimas corridas (default 10, máximo 20). Lectura para roles con acceso a analytics."""
     if not puede_ver_analytics(request.user):
         return Response(
             {"detail": "No tiene permiso para consultar corridas analíticas."},
@@ -367,23 +518,7 @@ def ultimas_corridas(request):
 
     limite = max(1, min(limite, 20))
     corridas = CorridaAnalitica.objects.all().order_by("-fecha_ejecucion")[:limite]
-    data = [
-        {
-            "id": c.id,
-            "task_id": c.task_id,
-            "estado": c.estado,
-            "fecha_ejecucion": c.fecha_ejecucion,
-            "queued_at": c.queued_at,
-            "started_at": c.started_at,
-            "finished_at": c.finished_at,
-            "registros_procesados": c.registros_procesados,
-            "puntos_usados": c.puntos_usados,
-            "mensaje": c.mensaje,
-            "error_detalle": c.error_detalle,
-            "resultados_tendencia_count": c.resultados_tendencia.count(),
-        }
-        for c in corridas
-    ]
+    data = [_serialize_corrida_resumida(c) for c in corridas]
     return Response({"count": len(data), "results": data})
 
 

@@ -39,6 +39,11 @@ class CorridaAnalitica(models.Model):
     metodo = models.CharField(max_length=20, choices=Metodo.choices, default=Metodo.MANUAL)
     parametros = models.JSONField(default=dict, blank=True)
     puntos_usados = models.PositiveIntegerField(default=0)
+    productos_candidatos_tendencia = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Productos distintos con consumo OUT en la ventana usada para evaluar tendencias (incluye los que no alcanzaron puntos mínimos).",
+    )
     error_detalle = models.TextField(blank=True, default="")
     ejecutado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -61,6 +66,8 @@ class HechoConsumo(models.Model):
     """
     Tabla analítica: consumo/movimientos agregados por producto, fecha y tipo.
     Origen: inventory.MovStock (ETL).
+
+    ``fecha`` es el día calendario en TIME_ZONE del proyecto (mismo criterio que ``TruncDate``/``fecha__date`` en el ETL).
     """
     producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name="hechos_consumo")
     fecha = models.DateField()

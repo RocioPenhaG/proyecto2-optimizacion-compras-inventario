@@ -135,6 +135,7 @@ SIMPLE_JWT = {
 # Legado / reservado; el flujo de solicitudes en `purchases.rules` no usa costo ni este umbral para Gerencia.
 GERENCIA_COSTO_UMBRAL = Decimal(str(env("GERENCIA_COSTO_UMBRAL", default="10000.00")))
 
+# Celery: broker y result backend en Redis por defecto (misma URL que REDIS_URL).
 CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default=CELERY_BROKER_URL)
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -144,11 +145,13 @@ CELERY_TIMEZONE = TIME_ZONE
 
 from celery.schedules import crontab
 
-_etl_hour = env.int("CELERY_ETL_CRON_HOUR", default=2)
+# Hora local de Django (TIME_ZONE): por defecto 22:00. Sobrescribir con CELERY_ETL_CRON_HOUR / MINUTE.
+_etl_hour = env.int("CELERY_ETL_CRON_HOUR", default=22)
+_etl_minute = env.int("CELERY_ETL_CRON_MINUTE", default=0)
 CELERY_BEAT_SCHEDULE = {
-    "etl-analitico-d1": {
+    "etl-analitico-d1-diario": {
         "task": "apps.analytics.tasks.run_etl_analitico_d1",
-        "schedule": crontab(hour=_etl_hour, minute=0),
+        "schedule": crontab(hour=_etl_hour, minute=_etl_minute),
     },
 }
 

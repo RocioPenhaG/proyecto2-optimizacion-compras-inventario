@@ -2,6 +2,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("resumen-consumo/", views.resumen_consumo),
+    path("top-productos-consumidos/", views.top_productos_consumidos),
+    path("ultima-corrida/", views.ultima_corrida),
     path("consumo-mensual/", views.consumo_mensual),
     path("consumo-por-dia-semana/", views.consumo_por_dia_semana),
     path("indicadores/", views.indicadores),

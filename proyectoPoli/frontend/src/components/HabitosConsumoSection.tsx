@@ -14,6 +14,7 @@ import {
   BarController,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import { formatIsoDateToDMY } from "@/utils/dateFormat";
 
 ChartJS.register(
   CategoryScale,
@@ -27,6 +28,11 @@ ChartJS.register(
 
 const API_HABITOS = "/api/analytics/habitos-resumen/";
 const DIAS_SEMANA = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+/** Etiqueta visible para eje mensual: evita `YYYY-MM` tipo ISO. */
+function formatAnioMesLabel(anio: number, mes: number): string {
+  return `${String(mes).padStart(2, "0")}-${anio}`;
+}
 
 interface ConsumoMensualItem {
   producto_id: number;
@@ -85,10 +91,14 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   const consumo_por_dia_semana = data?.consumo_por_dia_semana ?? [];
 
   // Agrupar consumo mensual por (anio-mes) para el gráfico de barras (suma de todos los productos o por producto)
-  const labelsMensual = Array.from(
-    new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`))
+  const labelsMensualRaw = Array.from(
+    new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`)),
   ).sort();
-  const porMes = labelsMensual.map((label) => {
+  const labelsMensualDisplay = labelsMensualRaw.map((ym) => {
+    const [y, m] = ym.split("-");
+    return `${m}-${y}`;
+  });
+  const porMes = labelsMensualRaw.map((label) => {
     const total = consumo_mensual
       .filter((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}` === label)
       .reduce((s, r) => s + r.cantidad_total, 0);
@@ -97,7 +107,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
 
   const chartMensual = useMemo(
     () => ({
-      labels: labelsMensual,
+      labels: labelsMensualDisplay,
       datasets: [
         {
           label: "Consumo total (salidas)",
@@ -108,7 +118,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
         },
       ],
     }),
-    [labelsMensual, porMes],
+    [labelsMensualDisplay, porMes],
   );
 
   const optsMensual = useMemo(
@@ -185,7 +195,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
       {!loading && error && <p className="text-sm text-red-500">{error}</p>}
       {!loading && !error && data && (
         <p className="text-sm text-gray-500">
-          Período: {data.filtro_desde} — {data.filtro_hasta}
+          Período: {formatIsoDateToDMY(data.filtro_desde)} — {formatIsoDateToDMY(data.filtro_hasta)}
         </p>
       )}
 
@@ -210,9 +220,9 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
             <tr>
               <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
               <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-              <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total período</th>
-              <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Promedio/mes</th>
-              <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Meses con datos</th>
+              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Total período</th>
+              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio/mes</th>
+              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Meses con datos</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -227,9 +237,9 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
                 <tr key={row.producto_id} className="hover:bg-gray-50">
                   <td className="px-6 py-3 text-sm text-gray-900">{row.sku}</td>
                   <td className="px-6 py-3 text-sm text-gray-700">{row.nombre}</td>
-                  <td className="px-6 py-3 text-sm text-right font-medium">{row.total}</td>
-                  <td className="px-6 py-3 text-sm text-right">{row.promedio.toFixed(1)}</td>
-                  <td className="px-6 py-3 text-sm text-right">{row.meses}</td>
+                  <td className="px-6 py-3 text-sm text-center font-medium">{row.total}</td>
+                  <td className="px-6 py-3 text-sm text-center">{row.promedio.toFixed(1)}</td>
+                  <td className="px-6 py-3 text-sm text-center">{row.meses}</td>
                 </tr>
               ))
             )}
@@ -247,18 +257,18 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-                <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Año-Mes</th>
-                <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Cantidad</th>
-                <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
+                <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mes</th>
+                <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad</th>
+                <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {consumo_mensual.slice(0, 50).map((r, idx) => (
                 <tr key={`${r.producto_id}-${r.anio}-${r.mes}-${idx}`} className="hover:bg-gray-50">
                   <td className="px-6 py-2 text-sm text-gray-900">{r.producto_sku}</td>
-                  <td className="px-6 py-2 text-sm text-gray-700">{r.anio}-{String(r.mes).padStart(2, "0")}</td>
-                  <td className="px-6 py-2 text-sm text-right">{r.cantidad_total}</td>
-                  <td className="px-6 py-2 text-sm text-right">{r.promedio_diario.toFixed(2)}</td>
+                  <td className="px-6 py-2 text-sm text-gray-700">{formatAnioMesLabel(r.anio, r.mes)}</td>
+                  <td className="px-6 py-2 text-sm text-center">{r.cantidad_total}</td>
+                  <td className="px-6 py-2 text-sm text-center">{r.promedio_diario.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>

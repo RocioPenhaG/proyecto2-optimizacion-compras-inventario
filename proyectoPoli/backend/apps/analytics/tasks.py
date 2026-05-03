@@ -1,6 +1,8 @@
 """
 Tareas Celery para el módulo analítico (Release 2).
-Ejecución programada del ETL incremental D-1.
+
+``run_etl_analitico_d1`` procesa solo el día anterior (D-1) respecto a ``timezone.now()`` y debe
+invocarse desde Celery Beat (programación diaria) o desde la API (corrida ya en QUEUED con task_id).
 """
 from datetime import timedelta
 
@@ -27,9 +29,10 @@ def ping_analytics():
 @shared_task(bind=True, name="apps.analytics.tasks.run_etl_analitico_d1")
 def run_etl_analitico_d1(self):
     """
-    Ejecuta el ETL analítico para el día anterior (D-1).
+    Ejecuta el ETL analítico para el día anterior (D-1) en la zona horaria activa de Django.
+
     Invocado desde la API (CorridaAnalitica ya creada en QUEUED con task_id) o desde
-    Celery Beat (crea la fila QUEUED aquí si no existía).
+    Celery Beat (crea la fila con metodo=SCHEDULED si no existía corrida para este task_id).
     """
     ayer = (timezone.now() - timedelta(days=1)).date()
     task_id = getattr(self.request, "id", None)
@@ -43,7 +46,7 @@ def run_etl_analitico_d1(self):
             "fecha_desde": ayer,
             "fecha_hasta": ayer,
             "parametros": {"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"},
-            "mensaje": "Ejecución encolada desde Celery.",
+            "mensaje": "Ejecución encolada (Celery Beat o worker).",
         }
         if task_id:
             corrida = CorridaAnalitica.objects.create(task_id=task_id, **defaults)
@@ -51,4 +54,8 @@ def run_etl_analitico_d1(self):
             corrida = CorridaAnalitica.objects.create(**defaults)
 
     corrida = ejecutar_etl_analitico(fecha_desde=ayer, fecha_hasta=ayer, corrida=corrida)
-    return {"estado": corrida.estado, "registros": corrida.registros_procesados, "fecha": str(ayer)}
+    return {
+        "estado": corrida.estado,
+        "registros_procesados": corrida.registros_procesados,
+        "fecha_procesada": str(ayer),
+    }

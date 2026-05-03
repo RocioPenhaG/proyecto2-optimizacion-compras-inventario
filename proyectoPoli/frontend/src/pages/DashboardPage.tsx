@@ -3,7 +3,9 @@ import { Link } from "react-router-dom";
 import { useAccessToken } from "@/contexts/AuthContext";
 import { HabitosConsumoSection } from "@/components/HabitosConsumoSection";
 import { AnalyticsCorridasSection } from "@/components/AnalyticsCorridasSection";
+import { AnalyticsDashboardSection } from "@/components/AnalyticsDashboardSection";
 import { apiErrorMessage } from "@/utils/apiFetch";
+import { formatIsoDateToDMY } from "@/utils/dateFormat";
 
 const API_DASHBOARD = "/api/dashboard/";
 
@@ -89,7 +91,7 @@ export function DashboardPage() {
       </div>
 
       <p className="text-sm text-gray-500">
-        Período: {data.filtro_desde} — {data.filtro_hasta}
+        Período: {formatIsoDateToDMY(data.filtro_desde)} — {formatIsoDateToDMY(data.filtro_hasta)}
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -116,6 +118,8 @@ export function DashboardPage() {
         </div>
       </div>
 
+      <AnalyticsDashboardSection token={token} desde={desde} hasta={hasta} />
+
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <h3 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">Top 10 insumos solicitados</h3>
         <table className="min-w-full divide-y divide-gray-200">
@@ -123,7 +127,7 @@ export function DashboardPage() {
             <tr>
               <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
               <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-              <th className="px-6 py-2 text-right text-xs font-medium text-gray-500 uppercase">Cantidad total</th>
+              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad total</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -138,7 +142,7 @@ export function DashboardPage() {
                 <tr key={idx} className="hover:bg-gray-50">
                   <td className="px-6 py-3 text-sm text-gray-900">{item.producto_sku}</td>
                   <td className="px-6 py-3 text-sm text-gray-700">{item.producto_nombre}</td>
-                  <td className="px-6 py-3 text-sm text-gray-900 font-semibold text-right">{item.cantidad_total}</td>
+                  <td className="px-6 py-3 text-sm text-gray-900 font-semibold text-center">{item.cantidad_total}</td>
                 </tr>
               ))
             )}

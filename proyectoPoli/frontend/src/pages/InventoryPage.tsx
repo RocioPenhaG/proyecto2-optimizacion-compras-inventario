@@ -18,9 +18,13 @@ interface Product {
   stock_actual: number;
 }
 
+const MOV_PAGE_SIZE = 20;
+
 export function InventoryPage() {
   const token = useAccessToken();
   const [movements, setMovements] = useState<Movement[]>([]);
+  const [movTotal, setMovTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,19 +40,30 @@ export function InventoryPage() {
     observacion: ""
   });
 
-  const fetchData = async () => {
+  const fetchData = async (movementsPage: number) => {
     if (!token) return;
     try {
       setError(null);
-      const movsUrl = `/api/inventory/movimientos/?orden_fecha=${ordenFecha}`;
+      const movParams = new URLSearchParams({
+        orden_fecha: ordenFecha,
+        page: String(movementsPage),
+      });
+      const movsUrl = `/api/inventory/movimientos/?${movParams.toString()}`;
       const [resMov, resProd] = await Promise.all([
         fetch(movsUrl, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/products/productos/", { headers: { Authorization: `Bearer ${token}` } })
+        fetch("/api/products/productos/", { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      
+
       if (!resMov.ok || !resProd.ok) throw new Error("Error al cargar datos");
-      
-      setMovements(await resMov.json());
+
+      const movJson = await resMov.json();
+      if (Array.isArray(movJson)) {
+        setMovements(movJson);
+        setMovTotal(movJson.length);
+      } else {
+        setMovements(movJson.results ?? []);
+        setMovTotal(typeof movJson.count === "number" ? movJson.count : 0);
+      }
       setProducts(await resProd.json());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
@@ -58,8 +73,16 @@ export function InventoryPage() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, [token, ordenFecha]);
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+    void fetchData(page);
+  }, [token, ordenFecha, page]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [page]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +108,8 @@ export function InventoryPage() {
         throw new Error(errData[0] || errData.detail || JSON.stringify(errData));
       }
 
-      await fetchData();
+      await fetchData(1);
+      setPage(1);
       setShowModal(false);
       setFormData({ tipo: "IN", producto: "", cantidad: 1, observacion: "" });
     } catch (err) {
@@ -97,6 +121,10 @@ export function InventoryPage() {
 
   if (loading) return <div className="text-gray-500">Cargando inventario...</div>;
   if (error) return <div className="text-red-500">{error}</div>;
+
+  const totalPages = Math.max(1, Math.ceil(movTotal / MOV_PAGE_SIZE));
+  const fromIdx = movTotal === 0 ? 0 : (page - 1) * MOV_PAGE_SIZE + 1;
+  const toIdx = Math.min(page * MOV_PAGE_SIZE, movTotal);
 
   return (
     <div className="space-y-6">
@@ -110,7 +138,10 @@ export function InventoryPage() {
             <select
               id="orden-fecha"
               value={ordenFecha}
-              onChange={(e) => setOrdenFecha((e.target.value as "asc" | "desc"))}
+              onChange={(e) => {
+                setOrdenFecha(e.target.value as "asc" | "desc");
+                setPage(1);
+              }}
               className="rounded border border-gray-300 text-sm p-2 bg-white"
             >
               <option value="desc">Más recientes primero</option>
@@ -166,6 +197,34 @@ export function InventoryPage() {
             )}
           </tbody>
         </table>
+        <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-gray-600">
+            {movTotal === 0
+              ? "Sin movimientos"
+              : `Mostrando ${fromIdx}–${toIdx} de ${movTotal} movimientos`}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="px-3 py-1.5 text-sm font-medium rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Anterior
+            </button>
+            <span className="text-sm text-gray-600 tabular-nums">
+              Página {page} de {totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="px-3 py-1.5 text-sm font-medium rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Modal Nuevo Movimiento */}

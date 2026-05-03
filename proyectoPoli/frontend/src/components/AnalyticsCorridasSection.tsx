@@ -21,6 +21,7 @@ import {
   type TendenciaLinealItem,
   type TendenciaVisualResponse,
 } from "@/services/api";
+import { formatIsoDateTimeToDMYHM, formatIsoDateToDMY } from "@/utils/dateFormat";
 
 interface AnalyticsCorridasSectionProps {
   token: string | null;
@@ -44,6 +45,47 @@ function tendenciaLabel(pendiente: number | undefined) {
   return "Estable";
 }
 
+/** Etiquetas en español para `CorridaAnalitica.estado` (API devuelve claves en inglés). */
+const CORRIDA_ESTADO_ES: Record<string, string> = {
+  QUEUED: "En cola",
+  RUNNING: "En ejecución",
+  SUCCESS: "Completada",
+  ERROR: "Error",
+  CANCELLED: "Cancelada",
+  OK: "Completada (histórico)",
+};
+
+function corridaEstadoLabel(estado: string | null | undefined): string {
+  if (estado == null || estado === "") return "N/D";
+  return CORRIDA_ESTADO_ES[estado] ?? estado;
+}
+
+/** Etiquetas en español para `ResultadoTendenciaLineal.periodicidad`. */
+const TENDENCIA_PERIODICIDAD_ES: Record<string, string> = {
+  DAILY: "Diaria",
+  WEEKLY: "Semanal",
+  MONTHLY: "Mensual",
+  YEARLY: "Anual",
+};
+
+function tendenciaPeriodicidadLabel(periodicidad: string | null | undefined): string {
+  if (periodicidad == null || periodicidad === "") return "N/D";
+  return TENDENCIA_PERIODICIDAD_ES[periodicidad] ?? periodicidad;
+}
+
+/** Texto columna Tendencias: "X de Y productos analizados" o respaldo sin total. */
+function textoTendenciasCorrida(
+  resultadosCount: number,
+  productosAnalizados: number | null | undefined,
+): string {
+  if (productosAnalizados != null && productosAnalizados > 0) {
+    return `${resultadosCount} de ${productosAnalizados} productos analizados`;
+  }
+  if (resultadosCount === 1) return "1 producto con tendencia";
+  if (resultadosCount > 1) return `${resultadosCount} productos con tendencia`;
+  return "Sin tendencias";
+}
+
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {
@@ -64,12 +106,6 @@ function fmtSigned(value: unknown, digits = 0): string {
   if (n > 0) return `+${n.toFixed(digits)}`;
   if (n < 0) return n.toFixed(digits);
   return n.toFixed(digits);
-}
-
-function fmtDate(value: unknown): string {
-  if (typeof value !== "string" || value.trim() === "") return "N/D";
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
 }
 
 export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProps) {
@@ -147,12 +183,17 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
   const hasTrendDetails = useMemo(() => tendencias.length > 0, [tendencias]);
   const hasVisualData =
     (tendenciaVisual?.historico?.length ?? 0) > 0 && (tendenciaVisual?.tendencia?.length ?? 0) > 0;
-  const chartLabels = useMemo(() => {
+  const rawChartLabels = useMemo(() => {
     if (!tendenciaVisual) return [];
     const labels = tendenciaVisual.historico.map((h) => h.fecha);
     if (tendenciaVisual.prediccion?.fecha) labels.push(tendenciaVisual.prediccion.fecha);
     return labels;
   }, [tendenciaVisual]);
+
+  const chartLabelsDisplay = useMemo(
+    () => rawChartLabels.map((f) => formatIsoDateToDMY(f)),
+    [rawChartLabels],
+  );
 
   const chartData = useMemo(() => {
     if (!tendenciaVisual) return { labels: [], datasets: [] };
@@ -162,15 +203,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
     const predFecha = tendenciaVisual.prediccion?.fecha;
     const predValor = tendenciaVisual.prediccion?.valor;
 
-    const consumoData = chartLabels.map((label) => historicoMap.get(label) ?? null);
-    const tendenciaData = chartLabels.map((label) => {
+    const consumoData = rawChartLabels.map((label) => historicoMap.get(label) ?? null);
+    const tendenciaData = rawChartLabels.map((label) => {
       if (label === predFecha) return predValor ?? null;
       return tendenciaMap.get(label) ?? null;
     });
-    const predData = chartLabels.map((label) => (label === predFecha ? predValor ?? null : null));
+    const predData = rawChartLabels.map((label) => (label === predFecha ? predValor ?? null : null));
 
     return {
-      labels: chartLabels,
+      labels: chartLabelsDisplay,
       datasets: [
         {
           label: "Consumo real histórico",
@@ -200,7 +241,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         },
       ],
     };
-  }, [chartLabels, tendenciaVisual]);
+  }, [rawChartLabels, chartLabelsDisplay, tendenciaVisual]);
 
   const chartOptions = useMemo(
     () => ({
@@ -222,7 +263,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
   if (!token) return null;
 
   return (
-    <div className="space-y-4">
+    <div id="seccion-corridas-etl" className="space-y-4 scroll-mt-4">
       <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Corridas analíticas (ETL)</h3>
 
       {loading ? (
@@ -236,8 +277,8 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Datos analizados</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Tendencias</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Datos analizados</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Tendencias</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task</th>
               </tr>
             </thead>
@@ -260,10 +301,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                       setTendenciaVisual(null);
                     }}
                   >
-                    <td className="px-4 py-2 text-sm">{c.estado}</td>
-                    <td className="px-4 py-2 text-sm">{fmtDate(c.fecha_ejecucion)}</td>
-                    <td className="px-4 py-2 text-sm text-right">{c.registros_procesados}</td>
-                    <td className="px-4 py-2 text-sm text-right">{c.resultados_tendencia_count}</td>
+                    <td className="px-4 py-2 text-sm">{corridaEstadoLabel(c.estado)}</td>
+                    <td className="px-4 py-2 text-sm">{formatIsoDateTimeToDMYHM(c.fecha_ejecucion)}</td>
+                    <td className="px-4 py-2 text-sm text-center">{c.registros_procesados}</td>
+                    <td className="px-4 py-2 text-sm text-center">
+                      {textoTendenciasCorrida(
+                        c.resultados_tendencia_count,
+                        c.productos_candidatos_tendencia,
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-xs text-gray-500">{c.task_id || "N/A"}</td>
                   </tr>
                 ))
@@ -287,24 +333,23 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Periodicidad</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Producto</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Periodicidad</th>
                 <th
-                  className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase"
+                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
                   title="Cantidad de días usados para el cálculo"
                 >
                   Días analizados
                 </th>
                 <th
-                  className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase"
+                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
                   title="Cambio promedio del consumo por día"
                 >
                   Variación diaria (unidades)
                 </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">R2</th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Predicción sig.</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Rango</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Interpretación</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predicción sig.</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Rango</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Interpretación</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -316,16 +361,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                   }`}
                   onClick={() => setSelectedTendenciaId(t.id)}
                 >
-                  <td className="px-4 py-2 text-sm">{t.producto_nombre}</td>
-                  <td className="px-4 py-2 text-sm">{t.periodicidad}</td>
-                  <td className="px-4 py-2 text-sm text-right">{t.puntos_usados}</td>
-                  <td className="px-4 py-2 text-sm text-right">{fmtSigned(t.pendiente, 0)}</td>
-                  <td className="px-4 py-2 text-sm text-right">{fmt(t.r2, 4)}</td>
-                  <td className="px-4 py-2 text-sm text-right">{fmt(t.prediccion_siguiente, 2)}</td>
-                  <td className="px-4 py-2 text-sm">
-                    {t.fecha_inicio} - {t.fecha_fin}
+                  <td className="px-4 py-2 text-sm text-center">{t.producto_nombre}</td>
+                  <td className="px-4 py-2 text-sm text-center">{tendenciaPeriodicidadLabel(t.periodicidad)}</td>
+                  <td className="px-4 py-2 text-sm text-center">{t.puntos_usados}</td>
+                  <td className="px-4 py-2 text-sm text-center">{fmtSigned(t.pendiente, 0)}</td>
+                  <td className="px-4 py-2 text-sm text-center">{fmt(t.prediccion_siguiente, 2)}</td>
+                  <td className="px-4 py-2 text-sm text-center">
+                    {formatIsoDateToDMY(t.fecha_inicio)} — {formatIsoDateToDMY(t.fecha_fin)}
                   </td>
-                  <td className="px-4 py-2 text-sm">{tendenciaLabel(t.pendiente)}</td>
+                  <td className="px-4 py-2 text-sm text-center">{tendenciaLabel(t.pendiente)}</td>
                 </tr>
               ))}
             </tbody>
