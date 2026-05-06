@@ -189,10 +189,18 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   }).sort((a, b) => b.total - a.total);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="habitos-consumo-section">
       <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Hábitos de consumo</h3>
-      {loading && <p className="text-sm text-gray-500">Cargando hábitos de consumo...</p>}
-      {!loading && error && <p className="text-sm text-red-500">{error}</p>}
+      {loading && (
+        <p className="text-sm text-gray-500" data-testid="habitos-loading">
+          Cargando hábitos de consumo...
+        </p>
+      )}
+      {!loading && error && (
+        <p className="text-sm text-red-500" data-testid="habitos-error">
+          {error}
+        </p>
+      )}
       {!loading && !error && data && (
         <p className="text-sm text-gray-500">
           Período: {formatIsoDateToDMY(data.filtro_desde)} — {formatIsoDateToDMY(data.filtro_hasta)}
@@ -201,10 +209,10 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
 
       {!loading && !error && data && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg shadow p-4 h-80">
+          <div className="bg-white rounded-lg shadow p-4 h-80" data-testid="habitos-chart-mensual">
             <Bar data={chartMensual} options={optsMensual} />
           </div>
-          <div className="bg-white rounded-lg shadow p-4 h-80">
+          <div className="bg-white rounded-lg shadow p-4 h-80" data-testid="habitos-chart-dia-semana">
             <Bar data={chartDiaSemana} options={optsDiaSemana} />
           </div>
         </div>
@@ -228,7 +236,11 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
           <tbody className="bg-white divide-y divide-gray-200">
             {tablaPorProducto.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                <td
+                  colSpan={5}
+                  className="px-6 py-4 text-center text-sm text-gray-500"
+                  data-testid="habitos-tabla-sin-datos"
+                >
                   No hay datos de consumo en el período.
                 </td>
               </tr>

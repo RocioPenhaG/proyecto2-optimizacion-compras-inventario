@@ -20,7 +20,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4" data-testid="login-page">
       <div className="w-full max-w-sm bg-white rounded-lg shadow-md p-8">
         <h1 className="text-2xl font-semibold text-gray-800 text-center mb-6">
           Segupak
@@ -28,9 +28,9 @@ export function LoginPage() {
         <p className="text-sm text-gray-500 text-center mb-6">
           Gestión de compras e inventarios
         </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" data-testid="login-form">
           {error && (
-            <div className="p-3 rounded-md bg-red-50 text-red-700 text-sm">
+            <div className="p-3 rounded-md bg-red-50 text-red-700 text-sm" data-testid="login-error" role="alert">
               {error}
             </div>
           )}
@@ -40,6 +40,7 @@ export function LoginPage() {
             </label>
             <input
               id="username"
+              data-testid="login-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -54,6 +55,7 @@ export function LoginPage() {
             </label>
             <input
               id="password"
+              data-testid="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -64,6 +66,7 @@ export function LoginPage() {
           </div>
           <button
             type="submit"
+            data-testid="login-submit"
             className="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             Entrar

@@ -117,7 +117,7 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
   const c = ultima?.corrida;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="analytics-dashboard-section">
       <div>
         <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Indicadores analíticos (consumo)</h3>
         <p className="text-sm text-gray-500 mt-1">
@@ -126,25 +126,33 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
         </p>
       </div>
 
-      {loading && <p className="text-sm text-gray-500">Cargando indicadores analíticos...</p>}
-      {!loading && error && <p className="text-sm text-red-500">{error}</p>}
+      {loading && (
+        <p className="text-sm text-gray-500" data-testid="analytics-loading">
+          Cargando indicadores analíticos...
+        </p>
+      )}
+      {!loading && error && (
+        <p className="text-sm text-red-500" data-testid="analytics-error">
+          {error}
+        </p>
+      )}
 
       {!loading && !error && resumen && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="analytics-kpi-grid">
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500" data-testid="analytics-kpi-total-salidas">
               <h4 className="text-xs font-medium text-gray-500 uppercase">Total salidas (período)</h4>
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.total_salidas.toLocaleString()}</p>
             </div>
-            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-violet-500">
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-violet-500" data-testid="analytics-kpi-productos-consumo">
               <h4 className="text-xs font-medium text-gray-500 uppercase">Productos con consumo</h4>
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.productos_distintos}</p>
             </div>
-            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-teal-500">
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-teal-500" data-testid="analytics-kpi-dias-out">
               <h4 className="text-xs font-medium text-gray-500 uppercase">Días con movimiento OUT</h4>
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.dias_con_consumo}</p>
             </div>
-            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500">
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500" data-testid="analytics-kpi-promedio-diario">
               <h4 className="text-xs font-medium text-gray-500 uppercase">Promedio diario (período)</h4>
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.promedio_diario_periodo}</p>
               <p className="text-xs text-gray-500 mt-1">Total salidas ÷ días con consumo</p>
@@ -152,16 +160,22 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
           </div>
 
           {resumen.total_salidas === 0 && (
-            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            <p
+              className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2"
+              data-testid="analytics-no-salidas-banner"
+            >
               No hay salidas (OUT) registradas en HechoConsumo para este período. Ejecute el ETL analítico si ya
               hay movimientos de stock.
             </p>
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg shadow p-4 h-96">
+            <div className="bg-white rounded-lg shadow p-4 h-96" data-testid="analytics-top-consumidos-chart">
               {(top?.top_productos.length ?? 0) === 0 ? (
-                <p className="text-sm text-gray-500 h-full flex items-center justify-center">
+                <p
+                  className="text-sm text-gray-500 h-full flex items-center justify-center"
+                  data-testid="analytics-top-consumidos-empty"
+                >
                   Sin datos para el gráfico de ranking en el período seleccionado.
                 </p>
               ) : (
@@ -169,7 +183,7 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
               )}
             </div>
 
-            <div className="bg-white rounded-lg shadow p-4 border border-gray-100">
+            <div className="bg-white rounded-lg shadow p-4 border border-gray-100" data-testid="analytics-ultima-corrida">
               <h4 className="text-sm font-semibold text-gray-700 uppercase mb-3">Última corrida ETL</h4>
               {!c ? (
                 <p className="text-sm text-gray-500">Aún no hay corridas analíticas registradas.</p>

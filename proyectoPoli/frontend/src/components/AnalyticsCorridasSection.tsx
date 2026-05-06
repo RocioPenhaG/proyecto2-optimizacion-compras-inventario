@@ -95,9 +95,16 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
-function fmt(value: unknown, digits = 2): string {
+/** Unidades de consumo / predicción: valores enteros en UI y gráficos. */
+function roundUnidades(value: unknown): number | null {
   const n = asNumber(value);
-  return n == null ? "N/D" : n.toFixed(digits);
+  if (n == null) return null;
+  return Math.round(n);
+}
+
+function fmtUnidades(value: unknown): string {
+  const n = roundUnidades(value);
+  return n == null ? "N/D" : String(n);
 }
 
 function fmtSigned(value: unknown, digits = 0): string {
@@ -203,12 +210,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
     const predFecha = tendenciaVisual.prediccion?.fecha;
     const predValor = tendenciaVisual.prediccion?.valor;
 
-    const consumoData = rawChartLabels.map((label) => historicoMap.get(label) ?? null);
+    const consumoData = rawChartLabels.map((label) => roundUnidades(historicoMap.get(label)));
     const tendenciaData = rawChartLabels.map((label) => {
-      if (label === predFecha) return predValor ?? null;
-      return tendenciaMap.get(label) ?? null;
+      const raw =
+        label === predFecha ? (predValor ?? tendenciaMap.get(label)) : tendenciaMap.get(label);
+      return roundUnidades(raw);
     });
-    const predData = rawChartLabels.map((label) => (label === predFecha ? predValor ?? null : null));
+    const predData = rawChartLabels.map((label) =>
+      label === predFecha ? roundUnidades(predValor) : null,
+    );
 
     return {
       labels: chartLabelsDisplay,
@@ -251,10 +261,27 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
       plugins: {
         legend: { position: "top" as const },
         title: { display: true, text: "Consumo histórico vs predicción" },
+        tooltip: {
+          callbacks: {
+            label(ctx: { dataset?: { label?: string }; parsed: { y: number | null } }) {
+              const y = ctx.parsed.y;
+              const base = ctx.dataset?.label ?? "";
+              if (y == null || Number.isNaN(y)) return base;
+              return `${base}: ${Math.round(y)}`;
+            },
+          },
+        },
       },
       scales: {
         x: { title: { display: true, text: "Fechas" } },
-        y: { title: { display: true, text: "Unidades consumidas" }, beginAtZero: true },
+        y: {
+          title: { display: true, text: "Unidades consumidas" },
+          beginAtZero: true,
+          ticks: {
+            callback: (tickValue: string | number) =>
+              typeof tickValue === "number" ? String(Math.round(tickValue)) : String(tickValue),
+          },
+        },
       },
     }),
     [],
@@ -263,16 +290,20 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
   if (!token) return null;
 
   return (
-    <div id="seccion-corridas-etl" className="space-y-4 scroll-mt-4">
+    <div id="seccion-corridas-etl" className="space-y-4 scroll-mt-4" data-testid="corridas-etl-section">
       <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Corridas analíticas (ETL)</h3>
 
       {loading ? (
-        <p className="text-sm text-gray-500">Cargando corridas ETL...</p>
+        <p className="text-sm text-gray-500" data-testid="corridas-etl-loading">
+          Cargando corridas ETL...
+        </p>
       ) : error ? (
-        <p className="text-sm text-red-500">{error}</p>
+        <p className="text-sm text-red-500" data-testid="corridas-etl-error">
+          {error}
+        </p>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200" data-testid="corridas-etl-table">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
@@ -285,7 +316,11 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
             <tbody className="bg-white divide-y divide-gray-200">
               {corridas.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                  <td
+                    colSpan={5}
+                    className="px-6 py-4 text-center text-sm text-gray-500"
+                    data-testid="corridas-etl-empty"
+                  >
                     No hay corridas registradas.
                   </td>
                 </tr>
@@ -293,6 +328,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                 corridas.map((c) => (
                   <tr
                     key={c.id}
+                    data-testid={`corrida-row-${c.id}`}
                     className={`hover:bg-gray-50 ${selectedCorridaId === c.id ? "bg-blue-50" : ""}`}
                     onClick={() => {
                       setSelectedCorridaId(c.id);
@@ -319,7 +355,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-4">
+      <div className="bg-white rounded-lg shadow p-4" data-testid="tendencias-lineales-panel">
         <h4 className="text-sm font-semibold text-gray-700 uppercase mb-3">Detalle de tendencias lineales</h4>
         {tendenciasLoading ? (
           <p className="text-sm text-gray-500">Consultando resultados de tendencia...</p>
@@ -328,9 +364,11 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         ) : !statusData && selectedTaskId ? (
           <p className="text-sm text-gray-500">Esperando estado de corrida...</p>
         ) : selectedCorridaId == null ? (
-          <p className="text-sm text-gray-500">Seleccioná una corrida con task_id para ver detalle.</p>
+          <p className="text-sm text-gray-500" data-testid="tendencias-sin-corrida">
+            Seleccioná una corrida con task_id para ver detalle.
+          </p>
         ) : hasTrendDetails ? (
-          <table className="min-w-full divide-y divide-gray-200">
+          <table className="min-w-full divide-y divide-gray-200" data-testid="tendencias-tabla">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Producto</th>
@@ -356,6 +394,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
               {tendencias.map((t) => (
                 <tr
                   key={t.id}
+                  data-testid={`tendencia-row-${t.id}`}
                   className={`cursor-pointer hover:bg-gray-50 ${
                     selectedTendenciaId === t.id ? "bg-blue-50" : ""
                   }`}
@@ -365,7 +404,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                   <td className="px-4 py-2 text-sm text-center">{tendenciaPeriodicidadLabel(t.periodicidad)}</td>
                   <td className="px-4 py-2 text-sm text-center">{t.puntos_usados}</td>
                   <td className="px-4 py-2 text-sm text-center">{fmtSigned(t.pendiente, 0)}</td>
-                  <td className="px-4 py-2 text-sm text-center">{fmt(t.prediccion_siguiente, 2)}</td>
+                  <td className="px-4 py-2 text-sm text-center">{fmtUnidades(t.prediccion_siguiente)}</td>
                   <td className="px-4 py-2 text-sm text-center">
                     {formatIsoDateToDMY(t.fecha_inicio)} — {formatIsoDateToDMY(t.fecha_fin)}
                   </td>
@@ -375,31 +414,35 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-gray-500">La corrida seleccionada no tiene resultados de tendencia.</p>
+          <p className="text-sm text-gray-500" data-testid="tendencias-sin-resultados">
+            La corrida seleccionada no tiene resultados de tendencia.
+          </p>
         )}
 
         {hasTrendDetails && (
           <div className="mt-4 border-t pt-4">
             {!tendenciaVisual ? (
-              <p className="text-sm text-gray-500">Seleccioná una tendencia para ver su comparación.</p>
+              <p className="text-sm text-gray-500" data-testid="tendencias-sin-seleccion-visual">
+                Seleccioná una tendencia para ver su comparación.
+              </p>
             ) : !hasVisualData ? (
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500" data-testid="tendencias-visual-insuficiente">
                 {tendenciaVisual.detail || "No hay datos suficientes para visualizar la tendencia."}
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2" data-testid="tendencias-visual-panel">
                 <div className="flex items-center justify-between gap-2">
-                  <h5 className="text-sm font-semibold text-gray-700">
+                  <h5 className="text-sm font-semibold text-gray-700" data-testid="tendencias-visual-titulo">
                     {tendenciaVisual.producto} ({tendenciaVisual.sku})
                   </h5>
                   {tendenciaVisualLoading && (
                     <span className="text-xs text-gray-500">Actualizando gráfico...</span>
                   )}
                 </div>
-                <p className="text-sm text-gray-600">
-                  Predicción siguiente: {fmt(tendenciaVisual.prediccion?.valor, 2)} unidades
+                <p className="text-sm text-gray-600" data-testid="tendencias-prediccion-texto">
+                  Predicción siguiente: {fmtUnidades(tendenciaVisual.prediccion?.valor)} unidades
                 </p>
-                <div className="h-80">
+                <div className="h-80" data-testid="tendencias-chart-linea">
                   <Line data={chartData} options={chartOptions} />
                 </div>
               </div>

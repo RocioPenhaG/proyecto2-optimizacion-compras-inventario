@@ -64,18 +64,31 @@ export function DashboardPage() {
     fetchDashboard();
   }, [token, desde, hasta]);
 
-  if (loading) return <div className="text-gray-500">Cargando dashboard...</div>;
-  if (error) return <div className="text-red-500">{error}</div>;
+  if (loading) {
+    return (
+      <div className="text-gray-500" data-testid="dashboard-loading">
+        Cargando dashboard...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="text-red-500" data-testid="dashboard-error">
+        {error}
+      </div>
+    );
+  }
   if (!data) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="dashboard-page">
       <div className="flex flex-wrap justify-between items-center gap-4">
         <h2 className="text-2xl font-bold text-gray-800">Dashboard</h2>
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">Desde</label>
           <input
             type="date"
+            data-testid="dashboard-fecha-desde"
             value={desde}
             onChange={(e) => setDesde(e.target.value)}
             className="rounded border border-gray-300 text-sm p-1.5"
@@ -83,6 +96,7 @@ export function DashboardPage() {
           <label className="text-sm text-gray-600 ml-2">Hasta</label>
           <input
             type="date"
+            data-testid="dashboard-fecha-hasta"
             value={hasta}
             onChange={(e) => setHasta(e.target.value)}
             className="rounded border border-gray-300 text-sm p-1.5"
