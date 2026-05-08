@@ -27,12 +27,7 @@ ChartJS.register(
 );
 
 const API_HABITOS = "/api/analytics/habitos-resumen/";
-const DIAS_SEMANA = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
-
-/** Etiqueta visible para eje mensual: evita `YYYY-MM` tipo ISO. */
-function formatAnioMesLabel(anio: number, mes: number): string {
-  return `${String(mes).padStart(2, "0")}-${anio}`;
-}
+const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 interface ConsumoMensualItem {
   producto_id: number;
@@ -69,6 +64,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   const [data, setData] = useState<HabitosData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mesSeleccionado, setMesSeleccionado] = useState<string>("");
 
   useEffect(() => {
     if (!token) return;
@@ -91,13 +87,18 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   const consumo_por_dia_semana = data?.consumo_por_dia_semana ?? [];
 
   // Agrupar consumo mensual por (anio-mes) para el gráfico de barras (suma de todos los productos o por producto)
-  const labelsMensualRaw = Array.from(
-    new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`)),
-  ).sort();
-  const labelsMensualDisplay = labelsMensualRaw.map((ym) => {
-    const [y, m] = ym.split("-");
-    return `${m}-${y}`;
-  });
+  const labelsMensualRaw = useMemo(
+    () => Array.from(new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`))).sort(),
+    [consumo_mensual],
+  );
+  const labelsMensualDisplay = useMemo(
+    () =>
+      labelsMensualRaw.map((ym) => {
+        const [y, m] = ym.split("-");
+        return `${m}-${y}`;
+      }),
+    [labelsMensualRaw],
+  );
   const porMes = labelsMensualRaw.map((label) => {
     const total = consumo_mensual
       .filter((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}` === label)
@@ -105,12 +106,22 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
     return total;
   });
 
+  useEffect(() => {
+    if (labelsMensualRaw.length === 0) {
+      setMesSeleccionado("");
+      return;
+    }
+    setMesSeleccionado((actual) =>
+      actual && labelsMensualRaw.includes(actual) ? actual : labelsMensualRaw[labelsMensualRaw.length - 1] ?? "",
+    );
+  }, [labelsMensualRaw]);
+
   const chartMensual = useMemo(
     () => ({
       labels: labelsMensualDisplay,
       datasets: [
         {
-          label: "Consumo total (salidas)",
+          label: "Consumo total (unidades de productos)",
           data: porMes,
           backgroundColor: "rgba(59, 130, 246, 0.6)",
           borderColor: "rgb(59, 130, 246)",
@@ -128,10 +139,10 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
       animation: false as const,
       plugins: {
         legend: { position: "top" as const },
-        title: { display: true, text: "Consumo mensual (total por mes)" },
+        title: { display: true, text: "Consumo mensual (total de unidades de productos por mes)" },
       },
       scales: {
-        y: { beginAtZero: true },
+        y: { beginAtZero: true, title: { display: true, text: "Unidades de productos" } },
       },
     }),
     [],
@@ -150,7 +161,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
       labels: DIAS_SEMANA,
       datasets: [
         {
-          label: "Consumo por día de la semana",
+          label: "Consumo por día de la semana (unidades de productos)",
           data: porDiaSemana,
           backgroundColor: "rgba(34, 197, 94, 0.6)",
           borderColor: "rgb(34, 197, 94)",
@@ -168,25 +179,88 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
       animation: false as const,
       plugins: {
         legend: { position: "top" as const },
-        title: { display: true, text: "Consumo por día de la semana" },
+        title: { display: true, text: "Consumo por día de la semana (unidades de productos)" },
       },
       scales: {
-        y: { beginAtZero: true },
+        y: { beginAtZero: true, title: { display: true, text: "Unidades de productos" } },
       },
     }),
     [],
   );
 
-  // Tabla: consumo mensual por producto (agrupar por producto, mostrar filas producto + meses)
-  const productosUnicos = Array.from(
-    new Map(consumo_mensual.map((r) => [r.producto_id, { sku: r.producto_sku, nombre: r.producto_nombre }])).entries()
-  );
-  const tablaPorProducto = productosUnicos.map(([id, info]) => {
-    const filas = consumo_mensual.filter((r) => r.producto_id === id);
-    const total = filas.reduce((s, r) => s + r.cantidad_total, 0);
-    const promedio = filas.length ? total / filas.length : 0;
-    return { producto_id: id, sku: info.sku, nombre: info.nombre, total, promedio, meses: filas.length };
-  }).sort((a, b) => b.total - a.total);
+  const resumenPeriodo = useMemo(() => {
+    const totalesMensuales = labelsMensualRaw.map((ym, idx) => ({
+      ym,
+      label: labelsMensualDisplay[idx],
+      total: porMes[idx] ?? 0,
+    }));
+    const totalesDia = [1, 2, 3, 4, 5, 6, 7].map((dia) => ({
+      dia,
+      total: consumo_por_dia_semana
+        .filter((r) => r.dia_semana === dia)
+        .reduce((s, r) => s + r.cantidad_total, 0),
+    }));
+    const mesMayor = totalesMensuales.reduce<{ ym: string; label: string; total: number } | null>(
+      (maximo, item) => (!maximo || item.total > maximo.total ? item : maximo),
+      null,
+    );
+    const mesMenor = totalesMensuales.reduce<{ ym: string; label: string; total: number } | null>(
+      (minimo, item) => (!minimo || item.total < minimo.total ? item : minimo),
+      null,
+    );
+    const diaMayor = totalesDia.reduce<{ dia: number; total: number } | null>(
+      (maximo, item) => (!maximo || item.total > maximo.total ? item : maximo),
+      null,
+    );
+    const promedioMensual = totalesMensuales.length > 0
+      ? totalesMensuales.reduce((sum, item) => sum + item.total, 0) / totalesMensuales.length
+      : 0;
+
+    return {
+      mesMayor,
+      mesMenor,
+      diaMayor: diaMayor ? { nombre: DIAS_SEMANA[diaMayor.dia - 1], total: diaMayor.total } : null,
+      promedioMensual,
+    };
+  }, [labelsMensualRaw, labelsMensualDisplay, porMes, consumo_por_dia_semana]);
+
+  const productosMesSeleccionado = useMemo(() => {
+    if (!mesSeleccionado) return [];
+    const rows = consumo_mensual
+      .filter((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}` === mesSeleccionado)
+      .sort((a, b) => b.cantidad_total - a.cantidad_total);
+    const totalMes = rows.reduce((sum, r) => sum + r.cantidad_total, 0);
+
+    const clasificar = (porcentaje: number): string => {
+      if (porcentaje >= 20) return "Producto de alto consumo";
+      if (porcentaje >= 10) return "Consumo relevante";
+      return "Consumo moderado";
+    };
+
+    return rows.map((r) => {
+      const porcentajeMes = totalMes > 0 ? (r.cantidad_total / totalMes) * 100 : 0;
+      return {
+        ...r,
+        porcentajeMes,
+        observacion: clasificar(porcentajeMes),
+      };
+    });
+  }, [consumo_mensual, mesSeleccionado]);
+
+  const totalMesSeleccionado = useMemo(() => {
+    return productosMesSeleccionado.reduce((sum, p) => sum + p.cantidad_total, 0);
+  }, [productosMesSeleccionado]);
+
+  const formatearPorcentaje = (value: number) => {
+    const redondeado = Math.round(value * 10) / 10;
+    return Number.isInteger(redondeado) ? `${redondeado.toFixed(0)}%` : `${redondeado.toFixed(1)}%`;
+  };
+
+  const labelMesSeleccionado = useMemo(() => {
+    if (!mesSeleccionado) return "—";
+    const [anio, mes] = mesSeleccionado.split("-");
+    return `${mes}-${anio}`;
+  }, [mesSeleccionado]);
 
   return (
     <div className="space-y-6" data-testid="habitos-consumo-section">
@@ -218,76 +292,108 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
         </div>
       )}
 
-      {!loading && !error && data && (
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <h4 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">
-          Consumo por producto (resumen en el período)
-        </h4>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-              <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Total período</th>
-              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio/mes</th>
-              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Meses con datos</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {tablaPorProducto.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={5}
-                  className="px-6 py-4 text-center text-sm text-gray-500"
-                  data-testid="habitos-tabla-sin-datos"
-                >
-                  No hay datos de consumo en el período.
-                </td>
-              </tr>
-            ) : (
-              tablaPorProducto.map((row) => (
-                <tr key={row.producto_id} className="hover:bg-gray-50">
-                  <td className="px-6 py-3 text-sm text-gray-900">{row.sku}</td>
-                  <td className="px-6 py-3 text-sm text-gray-700">{row.nombre}</td>
-                  <td className="px-6 py-3 text-sm text-center font-medium">{row.total}</td>
-                  <td className="px-6 py-3 text-sm text-center">{row.promedio.toFixed(1)}</td>
-                  <td className="px-6 py-3 text-sm text-center">{row.meses}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {!loading && !error && data && consumo_mensual.length === 0 && consumo_por_dia_semana.length === 0 && (
+        <p className="text-sm text-gray-500" data-testid="habitos-sin-datos-periodo">
+          No hay datos suficientes para analizar los hábitos de consumo en el período seleccionado.
+        </p>
       )}
 
       {!loading && !error && data && consumo_mensual.length > 0 && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <h4 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">
-            Detalle consumo mensual por producto
-          </h4>
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-                <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Mes</th>
-                <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad</th>
-                <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {consumo_mensual.slice(0, 50).map((r, idx) => (
-                <tr key={`${r.producto_id}-${r.anio}-${r.mes}-${idx}`} className="hover:bg-gray-50">
-                  <td className="px-6 py-2 text-sm text-gray-900">{r.producto_sku}</td>
-                  <td className="px-6 py-2 text-sm text-gray-700">{formatAnioMesLabel(r.anio, r.mes)}</td>
-                  <td className="px-6 py-2 text-sm text-center">{r.cantidad_total}</td>
-                  <td className="px-6 py-2 text-sm text-center">{r.promedio_diario.toFixed(2)}</td>
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="habitos-resumen-periodo">
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500">
+              <p className="text-xs uppercase text-gray-500">Mes con mayor consumo</p>
+              <p className="mt-2 text-base font-semibold text-gray-900">
+                {resumenPeriodo.mesMayor ? resumenPeriodo.mesMayor.label : "—"}
+              </p>
+              <p className="text-sm text-gray-600">
+                {resumenPeriodo.mesMayor ? `${resumenPeriodo.mesMayor.total} unidades` : "Sin datos"}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-violet-500">
+              <p className="text-xs uppercase text-gray-500">Mes con menor consumo</p>
+              <p className="mt-2 text-base font-semibold text-gray-900">
+                {resumenPeriodo.mesMenor ? resumenPeriodo.mesMenor.label : "—"}
+              </p>
+              <p className="text-sm text-gray-600">
+                {resumenPeriodo.mesMenor ? `${resumenPeriodo.mesMenor.total} unidades` : "Sin datos"}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-teal-500">
+              <p className="text-xs uppercase text-gray-500">Día con mayor consumo</p>
+              <p className="mt-2 text-base font-semibold text-gray-900">
+                {resumenPeriodo.diaMayor ? resumenPeriodo.diaMayor.nombre : "—"}
+              </p>
+              <p className="text-sm text-gray-600">
+                {resumenPeriodo.diaMayor ? `${resumenPeriodo.diaMayor.total} unidades` : "Sin datos"}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500">
+              <p className="text-xs uppercase text-gray-500">Promedio mensual de consumo</p>
+              <p className="mt-2 text-base font-semibold text-gray-900">{Math.round(resumenPeriodo.promedioMensual)} unidades</p>
+              <p className="text-sm text-gray-600">Promedio del período filtrado</p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="px-4 py-3 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
+              <h4 className="text-sm font-medium text-gray-700">Productos más consumidos del mes seleccionado</h4>
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
+                <label className="text-xs text-gray-600">
+                  Mes:
+                  <select
+                    value={mesSeleccionado}
+                    onChange={(e) => setMesSeleccionado(e.target.value)}
+                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 bg-white"
+                    data-testid="habitos-select-mes"
+                  >
+                    {[...labelsMensualRaw].reverse().map((ym) => {
+                      const [anio, mes] = ym.split("-");
+                      return (
+                        <option key={ym} value={ym}>
+                          {mes}-{anio}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              </div>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
+                  <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
+                  <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad consumida</th>
+                  <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">% del total del mes</th>
+                  <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
+                  <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Observación</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {consumo_mensual.length > 50 && (
-            <p className="px-4 py-2 text-sm text-gray-500">Mostrando los primeros 50 registros.</p>
-          )}
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {productosMesSeleccionado.map((r) => (
+                  <tr key={`${r.producto_id}-${r.anio}-${r.mes}`} className="hover:bg-gray-50">
+                    <td className="px-6 py-2 text-sm text-gray-900">{r.producto_nombre}</td>
+                    <td className="px-6 py-2 text-sm text-gray-600">{r.producto_sku}</td>
+                    <td className="px-6 py-2 text-sm text-center">{r.cantidad_total}</td>
+                    <td className="px-6 py-2 text-sm text-center">{formatearPorcentaje(r.porcentajeMes)}</td>
+                    <td className="px-6 py-2 text-sm text-center">{r.promedio_diario.toFixed(2)}</td>
+                    <td className="px-6 py-2 text-sm text-gray-700">
+                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                        {r.observacion}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {productosMesSeleccionado.length === 0 && (
+              <p className="px-4 py-3 text-sm text-gray-500">
+                No hay datos suficientes para analizar los hábitos de consumo en el período seleccionado.
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>

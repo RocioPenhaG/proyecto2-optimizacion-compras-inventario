@@ -120,6 +120,48 @@ export interface TopProductosConsumidosResponse {
   limit: number;
 }
 
+export type DemandaVsConsumoEstado = "solicitado_mayor" | "consumo_mayor" | "coherente";
+
+export interface DemandaVsConsumoItem {
+  producto_id: number;
+  sku: string;
+  nombre: string;
+  cantidad_solicitada: number;
+  cantidad_consumida: number;
+  diferencia: number;
+  estado: DemandaVsConsumoEstado;
+  lectura: string;
+  demanda_vs_consumo: string;
+  habito_detectado: string;
+  stock_actual: number;
+  consumo_promedio_diario: number;
+  cobertura_dias: number | null;
+  cobertura_texto: string;
+  riesgo: "Alto" | "Medio" | "Bajo";
+  recomendacion: string;
+}
+
+export interface DemandaVsConsumoResumen {
+  total_solicitado: number;
+  total_consumido: number;
+  mayor_solicitud_que_consumo: number;
+  mayor_consumo_que_solicitud: number;
+  coherentes: number;
+  riesgo_alto: number;
+  consumo_mayor_solicitud: number;
+  demanda_coherente: number;
+  baja_cobertura: number;
+  mayor_solicitud_consumo: number;
+}
+
+export interface DemandaVsConsumoResponse {
+  desde: string;
+  hasta: string;
+  limit: number;
+  resumen: DemandaVsConsumoResumen;
+  resultados: DemandaVsConsumoItem[];
+}
+
 export interface UltimaCorridaResponse {
   corrida: CorridaAnalytics | null;
 }
@@ -224,6 +266,22 @@ export async function getAnalyticsTopProductosConsumidos(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar top productos consumidos"));
+  return res.json();
+}
+
+export async function getAnalyticsDemandaVsConsumo(
+  accessToken: string,
+  options?: { desde?: string; hasta?: string; limit?: number },
+): Promise<DemandaVsConsumoResponse> {
+  const params = new URLSearchParams();
+  if (options?.desde) params.set("desde", options.desde);
+  if (options?.hasta) params.set("hasta", options.hasta);
+  if (options?.limit != null) params.set("limit", String(Math.min(100, Math.max(1, options.limit))));
+  const q = params.toString();
+  const res = await fetch(`${API_BASE}/analytics/demanda-vs-consumo/${q ? `?${q}` : ""}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar demanda vs consumo"));
   return res.json();
 }
 

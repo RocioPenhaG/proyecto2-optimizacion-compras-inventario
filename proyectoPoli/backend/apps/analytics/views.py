@@ -2,7 +2,7 @@
 API de hábitos de consumo (Release 2). Mismos permisos que dashboard: Compras, Gerencia, Contable, Admin.
 """
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from django.db.models import Q, Sum, Count, Min, Max, Avg
 from django.db.models.functions import ExtractYear, ExtractMonth, ExtractWeekDay
@@ -14,6 +14,8 @@ from rest_framework.response import Response
 
 from apps.users.models import Role
 from apps.products.models import Producto
+from apps.purchases.models import SolicitudDetalle
+from apps.inventory.models import StockProducto
 from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
 from .etl import resolver_productos_candidatos_tendencia
 from .tasks import run_etl_analitico_d1
@@ -175,6 +177,251 @@ def top_productos_consumidos(request):
         "filtro_hasta": str(fecha_hasta),
         "limit": limit,
     })
+
+
+def _clasificar_demanda_vs_consumo(cantidad_solicitada: int, cantidad_consumida: int):
+    """
+    diferencia = solicitado - consumido.
+    Coherente si |diff| <= 1 o |diff| <= 10% del máximo entre solicitado y consumido.
+    """
+    diff = int(cantidad_solicitada) - int(cantidad_consumida)
+    mx = max(int(cantidad_solicitada), int(cantidad_consumida))
+    if mx == 0:
+        return diff, "coherente", "Demanda coherente"
+    umbral_rel = 0.10 * mx
+    coherente = abs(diff) <= 1 or abs(diff) <= umbral_rel
+    if coherente:
+        return diff, "coherente", "Demanda coherente"
+    if diff > 0:
+        return diff, "solicitado_mayor", "Se solicita más de lo que se consume"
+    return diff, "consumo_mayor", "Se consume más de lo solicitado"
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def demanda_vs_consumo(request):
+    """
+    Compara cantidades solicitadas (detalle de solicitudes en el rango) vs consumidas
+    (HechoConsumo OUT, misma fuente que el ranking de productos más consumidos).
+    """
+    if not puede_ver_analytics(request.user):
+        return Response(
+            {"detail": "No tiene permiso para ver analytics."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    fecha_desde, fecha_hasta = parse_fechas(request)
+    if fecha_desde is None:
+        return Response(
+            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        limit = int(request.query_params.get("limit", 50))
+    except (TypeError, ValueError):
+        return Response({"detail": "Parámetro limit inválido."}, status=status.HTTP_400_BAD_REQUEST)
+    limit = max(1, min(limit, 100))
+
+    dt_desde = timezone.make_aware(datetime.combine(fecha_desde, time.min))
+    dt_hasta = timezone.make_aware(
+        datetime.strptime(fecha_hasta.strftime("%Y-%m-%d") + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+    )
+
+    por_solicitud = {
+        r["producto_id"]: int(r["cantidad_total"] or 0)
+        for r in SolicitudDetalle.objects.filter(
+            solicitud__creado_en__range=(dt_desde, dt_hasta),
+            producto_id__isnull=False,
+        )
+        .values("producto_id")
+        .annotate(cantidad_total=Sum("cantidad"))
+    }
+
+    consumo_rows = list(
+        HechoConsumo.objects.filter(
+            tipo_movimiento="OUT",
+            fecha__gte=fecha_desde,
+            fecha__lte=fecha_hasta,
+        )
+        .values("producto_id")
+        .annotate(
+            cantidad_total=Sum("cantidad_total"),
+            dias_con_consumo=Count("fecha", distinct=True),
+        )
+    )
+    por_consumo = {r["producto_id"]: int(r["cantidad_total"] or 0) for r in consumo_rows}
+    por_dias_consumo = {r["producto_id"]: int(r["dias_con_consumo"] or 0) for r in consumo_rows}
+
+    stock_map = {
+        s["producto_id"]: int(s["qty_on_hand"] or 0)
+        for s in StockProducto.objects.values("producto_id", "qty_on_hand")
+    }
+    stock_relevante_ids = {
+        s["producto_id"] for s in StockProducto.objects.filter(qty_on_hand__gt=0).values("producto_id")
+    }
+
+    pendiente_por_producto = {}
+    for t in (
+        ResultadoTendenciaLineal.objects.select_related("corrida")
+        .filter(producto_id__isnull=False)
+        .order_by("producto_id", "-corrida__fecha_ejecucion", "-id")
+        .values("producto_id", "pendiente")
+    ):
+        pid = t["producto_id"]
+        if pid not in pendiente_por_producto:
+            pendiente_por_producto[pid] = float(t["pendiente"])
+
+    all_ids = set(por_solicitud.keys()) | set(por_consumo.keys()) | set(stock_relevante_ids)
+    all_ids.discard(None)
+    productos_map = {p.id: p for p in Producto.objects.filter(id__in=all_ids)}
+    dias_periodo = max(1, (fecha_hasta - fecha_desde).days + 1)
+
+    def _habito_detectado(pid: int, consumo: int, dias_con_consumo: int):
+        pendiente = pendiente_por_producto.get(pid)
+        if pendiente is not None:
+            if pendiente > 0.2:
+                return "Consumo creciente"
+            if pendiente < -0.2:
+                return "Consumo decreciente"
+            return "Consumo estable"
+        if consumo <= 0:
+            return "Sin consumo reciente"
+        frecuencia = dias_con_consumo / dias_periodo
+        if frecuencia >= 0.30:
+            return "Consumo frecuente"
+        return "Consumo esporádico"
+
+    def _cobertura(stock_actual: int, consumo_promedio_diario: float):
+        if stock_actual <= 0:
+            return None, "Sin stock"
+        if consumo_promedio_diario > 0:
+            dias = int(round(stock_actual / consumo_promedio_diario))
+            return dias, f"{dias} días"
+        if consumo_promedio_diario == 0:
+            return None, "Sin consumo reciente"
+        return None, "No disponible"
+
+    def _demanda_vs_consumo_texto(solicitado: int, consumido: int):
+        diff, estado, lectura = _clasificar_demanda_vs_consumo(solicitado, consumido)
+        if estado == "consumo_mayor":
+            return diff, estado, lectura, "Se consume más de lo solicitado"
+        if estado == "solicitado_mayor":
+            return diff, estado, lectura, "Se solicita más de lo que se consume"
+        return diff, estado, lectura, "Demanda coherente"
+
+    def _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias, habito, estado):
+        consumo_fuerte = habito in ("Consumo frecuente", "Consumo creciente")
+        if ((cobertura_dias is not None and cobertura_dias <= 7) or stock_actual <= stock_minimo) and consumo_fuerte:
+            riesgo = "Alto"
+        elif (cobertura_dias is not None and 8 <= cobertura_dias <= 15) or estado == "consumo_mayor":
+            riesgo = "Medio"
+        else:
+            riesgo = "Bajo"
+
+        if habito == "Sin consumo reciente":
+            recomendacion = "Revisar stock inmovilizado"
+        elif estado == "consumo_mayor" and cobertura_dias is not None and cobertura_dias <= 7:
+            recomendacion = "Revisar reposición"
+        elif estado == "solicitado_mayor":
+            recomendacion = "Validar necesidad"
+        elif riesgo == "Alto":
+            recomendacion = "Reponer pronto"
+        elif riesgo == "Medio":
+            recomendacion = "Monitorear"
+        elif habito in ("Bajo movimiento", "Sin consumo reciente") and stock_actual > max(stock_minimo * 2, 0):
+            recomendacion = "No priorizar compra"
+        else:
+            recomendacion = "Mantener control"
+        return riesgo, recomendacion
+
+    rows_full = []
+    total_solicitado = 0
+    total_consumido = 0
+    n_solicitud_mayor = 0
+    n_consumo_mayor = 0
+    n_coherentes = 0
+    n_riesgo_alto = 0
+    n_baja_cobertura = 0
+
+    for pid in all_ids:
+        sol = por_solicitud.get(pid, 0)
+        cons = por_consumo.get(pid, 0)
+        dias_con_consumo = por_dias_consumo.get(pid, 0)
+        total_solicitado += sol
+        total_consumido += cons
+        diff, estado, lectura, demanda_texto = _demanda_vs_consumo_texto(sol, cons)
+        if estado == "solicitado_mayor":
+            n_solicitud_mayor += 1
+        elif estado == "consumo_mayor":
+            n_consumo_mayor += 1
+        else:
+            n_coherentes += 1
+
+        prod = productos_map.get(pid)
+        stock_actual = int(stock_map.get(pid, 0))
+        stock_minimo = int(prod.stock_minimo if prod else 0)
+        consumo_promedio_diario = round((cons / dias_periodo), 2) if dias_periodo else 0.0
+        cobertura_dias, cobertura_texto = _cobertura(stock_actual, consumo_promedio_diario)
+        habito = _habito_detectado(pid, cons, dias_con_consumo)
+        if habito == "Sin consumo reciente" and sol > 0:
+            habito = "Bajo movimiento"
+        riesgo, recomendacion = _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias, habito, estado)
+        if riesgo == "Alto":
+            n_riesgo_alto += 1
+        if cobertura_dias is not None and cobertura_dias <= 7:
+            n_baja_cobertura += 1
+
+        rows_full.append(
+            {
+                "producto_id": pid,
+                "sku": prod.sku if prod else "—",
+                "nombre": prod.nombre if prod else "—",
+                "cantidad_solicitada": sol,
+                "cantidad_consumida": cons,
+                "diferencia": diff,
+                "estado": estado,
+                "lectura": lectura,
+                "demanda_vs_consumo": demanda_texto,
+                "habito_detectado": habito,
+                "stock_actual": stock_actual,
+                "consumo_promedio_diario": consumo_promedio_diario,
+                "cobertura_dias": cobertura_dias,
+                "cobertura_texto": cobertura_texto,
+                "riesgo": riesgo,
+                "recomendacion": recomendacion,
+            }
+        )
+
+    riesgo_rank = {"Alto": 0, "Medio": 1, "Bajo": 2}
+    rows_full.sort(
+        key=lambda r: (
+            riesgo_rank.get(r["riesgo"], 3),
+            r["cobertura_dias"] if r["cobertura_dias"] is not None else 10**9,
+            -r["cantidad_consumida"],
+            r["nombre"] or "",
+        )
+    )
+    resultados = rows_full[:limit]
+
+    return Response(
+        {
+            "desde": str(fecha_desde),
+            "hasta": str(fecha_hasta),
+            "limit": limit,
+            "resumen": {
+                "total_solicitado": total_solicitado,
+                "total_consumido": total_consumido,
+                "mayor_solicitud_que_consumo": n_solicitud_mayor,
+                "mayor_consumo_que_solicitud": n_consumo_mayor,
+                "coherentes": n_coherentes,
+                "riesgo_alto": n_riesgo_alto,
+                "consumo_mayor_solicitud": n_consumo_mayor,
+                "demanda_coherente": n_coherentes,
+                "baja_cobertura": n_baja_cobertura,
+                "mayor_solicitud_consumo": n_solicitud_mayor,
+            },
+            "resultados": resultados,
+        }
+    )
 
 
 @api_view(["GET"])

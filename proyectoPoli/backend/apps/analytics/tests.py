@@ -8,8 +8,9 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.products.models import Producto
-from apps.inventory.models import MovStock
+from apps.inventory.models import MovStock, StockProducto
 from apps.users.models import User, Role
+from apps.purchases.models import SolicitudDetalle, SolicitudInsumo
 
 from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
 from .etl import ejecutar_etl_analitico, actualizar_resumen_consumo_mensual, _fecha_mov_local
@@ -280,6 +281,94 @@ class AnalyticsAPITestCase(TestCase):
         self.assertEqual(len(top), 2)
         self.assertEqual(top[0]["producto_id"], p2.id)
         self.assertEqual(top[0]["cantidad_total"], 99)
+
+    def test_demanda_vs_consumo_sin_auth(self):
+        resp = self.client.get("/api/analytics/demanda-vs-consumo/")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_demanda_vs_consumo_merge_y_clasificacion(self):
+        p_alto = Producto.objects.create(sku="DVC-A", nombre="Alcohol Gel", stock_minimo=0)
+        p_bajo = Producto.objects.create(sku="DVC-B", nombre="Mascarillas", stock_minimo=0)
+        p_ok = Producto.objects.create(sku="DVC-C", nombre="Guantes", stock_minimo=0)
+        ref = date(2026, 10, 15)
+        sol = SolicitudInsumo.objects.create(solicitante=self.user, destino="X")
+        sol.creado_en = timezone.make_aware(datetime(2026, 10, 10, 12, 0, 0))
+        sol.save(update_fields=["creado_en"])
+        SolicitudDetalle.objects.create(solicitud=sol, producto=p_alto, cantidad=160)
+        SolicitudDetalle.objects.create(solicitud=sol, producto=p_bajo, cantidad=100)
+        SolicitudDetalle.objects.create(solicitud=sol, producto=p_ok, cantidad=90)
+
+        HechoConsumo.objects.create(
+            producto=p_alto, fecha=ref, tipo_movimiento="OUT", cantidad_total=140
+        )
+        HechoConsumo.objects.create(
+            producto=p_bajo, fecha=ref, tipo_movimiento="OUT", cantidad_total=115
+        )
+        HechoConsumo.objects.create(
+            producto=p_ok, fecha=ref, tipo_movimiento="OUT", cantidad_total=88
+        )
+
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": "2026-10-01", "hasta": "2026-10-31", "limit": 20},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["desde"], "2026-10-01")
+        self.assertEqual(body["hasta"], "2026-10-31")
+        self.assertEqual(body["resumen"]["total_solicitado"], 350)
+        self.assertEqual(body["resumen"]["total_consumido"], 343)
+        self.assertEqual(body["resumen"]["mayor_solicitud_que_consumo"], 1)
+        self.assertEqual(body["resumen"]["mayor_consumo_que_solicitud"], 1)
+        self.assertEqual(body["resumen"]["coherentes"], 1)
+        self.assertIn("riesgo_alto", body["resumen"])
+        self.assertIn("baja_cobertura", body["resumen"])
+        self.assertIn("consumo_mayor_solicitud", body["resumen"])
+        self.assertIn("demanda_coherente", body["resumen"])
+
+        by_sku = {r["sku"]: r for r in body["resultados"]}
+        self.assertEqual(by_sku["DVC-A"]["diferencia"], 20)
+        self.assertEqual(by_sku["DVC-A"]["estado"], "solicitado_mayor")
+        self.assertEqual(by_sku["DVC-B"]["diferencia"], -15)
+        self.assertEqual(by_sku["DVC-B"]["estado"], "consumo_mayor")
+        self.assertEqual(by_sku["DVC-C"]["diferencia"], 2)
+        self.assertEqual(by_sku["DVC-C"]["estado"], "coherente")
+        self.assertIn("demanda_vs_consumo", by_sku["DVC-A"])
+        self.assertIn("habito_detectado", by_sku["DVC-A"])
+        self.assertIn("cobertura_texto", by_sku["DVC-A"])
+        self.assertIn("riesgo", by_sku["DVC-A"])
+        self.assertIn("recomendacion", by_sku["DVC-A"])
+
+    def test_demanda_vs_consumo_incluye_producto_con_stock(self):
+        p_stock = Producto.objects.create(sku="DVC-STOCK", nombre="Con stock", stock_minimo=2)
+        StockProducto.objects.create(producto=p_stock, qty_on_hand=9)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": "2026-10-01", "hasta": "2026-10-31", "limit": 50},
+        )
+        self.assertEqual(resp.status_code, 200)
+        by_sku = {r["sku"]: r for r in resp.json()["resultados"]}
+        self.assertIn("DVC-STOCK", by_sku)
+        self.assertEqual(by_sku["DVC-STOCK"]["cobertura_texto"], "Sin consumo reciente")
+
+    def test_demanda_vs_consumo_solo_consumo(self):
+        p = Producto.objects.create(sku="DVC-ONLY-C", nombre="Solo Consumo", stock_minimo=0)
+        ref = date(2026, 11, 1)
+        HechoConsumo.objects.create(producto=p, fecha=ref, tipo_movimiento="OUT", cantidad_total=42)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": "2026-11-01", "hasta": "2026-11-30"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(len(body["resultados"]), 1)
+        r0 = body["resultados"][0]
+        self.assertEqual(r0["cantidad_solicitada"], 0)
+        self.assertEqual(r0["cantidad_consumida"], 42)
+        self.assertEqual(r0["estado"], "consumo_mayor")
 
     def test_ultima_corrida(self):
         CorridaAnalitica.objects.create(

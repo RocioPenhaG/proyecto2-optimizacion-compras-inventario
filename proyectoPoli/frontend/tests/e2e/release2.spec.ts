@@ -84,7 +84,7 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
     await expect(
       page.getByTestId("analytics-no-salidas-banner").or(page.getByTestId("analytics-top-consumidos-empty")),
     ).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("habitos-tabla-sin-datos")).toBeVisible();
+    await expect(page.getByTestId("habitos-sin-datos-periodo")).toBeVisible();
   });
 });
 

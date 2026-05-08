@@ -14,6 +14,7 @@ from apps.users.models import Role
 from apps.purchases.models import SolicitudInsumo, EstadoSolicitud
 from apps.purchases.models import SolicitudDetalle
 from apps.products.models import Producto
+from apps.analytics.models import HechoConsumo
 
 
 def puede_ver_dashboard(user):
@@ -95,15 +96,95 @@ def dashboard_metrics(request):
         for d in detalles
     ]
 
-    # Productos con stock crítico (stock actual < stock mínimo)
-    productos_criticos = Producto.objects.filter(stock_minimo__gt=0).select_related("stock")
-    def _es_critico(p):
+    # Productos con stock crítico + detalle de cobertura/riesgo/recomendación para renderizar sección visible.
+    fecha_desde_date = fecha_desde.date()
+    fecha_hasta_date = fecha_hasta.date()
+    dias_periodo = max(1, (fecha_hasta_date - fecha_desde_date).days + 1)
+
+    consumo_map = {
+        row["producto_id"]: int(row["cantidad_total"] or 0)
+        for row in HechoConsumo.objects.filter(
+            tipo_movimiento="OUT",
+            fecha__gte=fecha_desde_date,
+            fecha__lte=fecha_hasta_date,
+        )
+        .values("producto_id")
+        .annotate(cantidad_total=Sum("cantidad_total"))
+    }
+
+    def _cobertura(stock_actual: int, consumo_promedio_diario: float):
+        if stock_actual <= 0:
+            return 0, "Sin stock"
+        if consumo_promedio_diario > 0:
+            cobertura = int(round(stock_actual / consumo_promedio_diario))
+            return cobertura, f"{cobertura} días"
+        if consumo_promedio_diario == 0:
+            return None, "Sin consumo reciente"
+        return None, "No disponible"
+
+    def _riesgo_y_recomendacion(stock_actual: int, stock_minimo: int, cobertura_dias):
+        if stock_actual <= 0:
+            return "Alto", "Urgente"
+        if cobertura_dias is not None and cobertura_dias <= 7:
+            return "Alto", "Reponer pronto"
+        if stock_actual <= stock_minimo:
+            return "Medio", "Monitorear"
+        if cobertura_dias is not None and 8 <= cobertura_dias <= 15:
+            return "Medio", "Monitorear"
+        return "Bajo", "Mantener control"
+
+    detalle_criticos = []
+    total_sin_stock = 0
+    total_cobertura_baja = 0
+
+    for p in Producto.objects.filter(activo=True).select_related("stock"):
         try:
-            qty = p.stock.qty_on_hand if p.stock else 0
+            stock_actual = int(p.stock.qty_on_hand) if p.stock else 0
         except Exception:
-            qty = 0
-        return qty < p.stock_minimo
-    productos_stock_critico = sum(1 for p in productos_criticos if _es_critico(p))
+            stock_actual = 0
+        stock_minimo = int(p.stock_minimo or 0)
+        cantidad_consumida = int(consumo_map.get(p.id, 0))
+        if stock_minimo <= 0 and cantidad_consumida <= 0:
+            continue
+        consumo_promedio_diario = round(cantidad_consumida / dias_periodo, 2) if dias_periodo else 0.0
+        cobertura_dias, cobertura_texto = _cobertura(stock_actual, consumo_promedio_diario)
+        riesgo, recomendacion = _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias)
+
+        es_critico = (stock_actual <= stock_minimo) or (
+            cobertura_dias is not None and cobertura_dias <= 7
+        )
+        if not es_critico:
+            continue
+
+        if stock_actual <= 0:
+            total_sin_stock += 1
+        if cobertura_dias is not None and cobertura_dias <= 7:
+            total_cobertura_baja += 1
+
+        detalle_criticos.append(
+            {
+                "producto_id": p.id,
+                "nombre": p.nombre,
+                "sku": p.sku,
+                "stock_actual": stock_actual,
+                "stock_minimo": stock_minimo,
+                "cobertura_dias": cobertura_dias,
+                "cobertura_texto": cobertura_texto,
+                "riesgo": riesgo,
+                "recomendacion": recomendacion,
+            }
+        )
+
+    riesgo_rank = {"Alto": 0, "Medio": 1, "Bajo": 2}
+    detalle_criticos.sort(
+        key=lambda r: (
+            riesgo_rank.get(r["riesgo"], 3),
+            r["cobertura_dias"] if r["cobertura_dias"] is not None else 10**9,
+            r["stock_actual"],
+            r["nombre"],
+        )
+    )
+    productos_stock_critico = len(detalle_criticos)
 
     return Response(
         {
@@ -111,6 +192,14 @@ def dashboard_metrics(request):
             "tiempo_promedio_aprobacion_dias": tiempo_promedio_aprobacion_dias,
             "top_insumos_solicitados": top_insumos,
             "productos_stock_critico": productos_stock_critico,
+            "stock_critico": {
+                "resumen": {
+                    "total_productos_criticos": productos_stock_critico,
+                    "total_sin_stock": total_sin_stock,
+                    "total_cobertura_baja": total_cobertura_baja,
+                },
+                "resultados": detalle_criticos,
+            },
             "filtro_desde": desde or fecha_desde.strftime("%Y-%m-%d"),
             "filtro_hasta": hasta or fecha_hasta.strftime("%Y-%m-%d"),
         }

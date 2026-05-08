@@ -1,6 +1,6 @@
 /**
  * Panel de integración analítica: KPIs desde HechoConsumo/ResumenConsumoMensual,
- * top productos consumidos y estado de la última corrida ETL (CorridaAnalitica).
+ * top productos consumidos y estado del último procesamiento analítico (CorridaAnalitica).
  */
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -79,13 +79,13 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
 
   const chartTop = useMemo(() => {
     const rows = top?.top_productos ?? [];
-    const labels = rows.map((r) => `${r.producto_sku}`);
+    const labels = rows.map((r) => r.producto_nombre || r.producto_sku);
     const data = rows.map((r) => r.cantidad_total);
     return {
       labels,
       datasets: [
         {
-          label: "Unidades consumidas (OUT)",
+          label: "Cantidad consumida (unidades de productos)",
           data,
           backgroundColor: "rgba(99, 102, 241, 0.65)",
           borderColor: "rgb(79, 70, 229)",
@@ -103,10 +103,10 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
       animation: false as const,
       plugins: {
         legend: { display: false },
-        title: { display: true, text: "Productos más consumidos (salidas)" },
+        title: { display: true, text: "Productos más consumidos" },
       },
       scales: {
-        x: { beginAtZero: true, title: { display: true, text: "Cantidad" } },
+        x: { beginAtZero: true, title: { display: true, text: "Cantidad (unidades)" } },
       },
     }),
     [],
@@ -120,10 +120,7 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
     <div className="space-y-6" data-testid="analytics-dashboard-section">
       <div>
         <h3 className="text-lg font-semibold text-gray-800 border-b pb-2">Indicadores analíticos (consumo)</h3>
-        <p className="text-sm text-gray-500 mt-1">
-          Datos desde tablas generadas por el ETL (HechoConsumo, ResumenConsumoMensual). Mismo período que los
-          filtros del dashboard.
-        </p>
+        <p className="text-sm text-gray-500 mt-1">Resumen general de las salidas de inventario registradas en el período seleccionado.</p>
       </div>
 
       {loading && (
@@ -149,7 +146,7 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.productos_distintos}</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4 border-l-4 border-teal-500" data-testid="analytics-kpi-dias-out">
-              <h4 className="text-xs font-medium text-gray-500 uppercase">Días con movimiento OUT</h4>
+              <h4 className="text-xs font-medium text-gray-500 uppercase">Días con salidas de inventario</h4>
               <p className="mt-2 text-2xl font-bold text-gray-900">{resumen.dias_con_consumo}</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500" data-testid="analytics-kpi-promedio-diario">
@@ -184,7 +181,7 @@ export function AnalyticsDashboardSection({ token, desde, hasta }: AnalyticsDash
             </div>
 
             <div className="bg-white rounded-lg shadow p-4 border border-gray-100" data-testid="analytics-ultima-corrida">
-              <h4 className="text-sm font-semibold text-gray-700 uppercase mb-3">Última corrida ETL</h4>
+              <h4 className="text-sm font-semibold text-gray-700 uppercase mb-3">Último procesamiento analítico</h4>
               {!c ? (
                 <p className="text-sm text-gray-500">Aún no hay corridas analíticas registradas.</p>
               ) : (

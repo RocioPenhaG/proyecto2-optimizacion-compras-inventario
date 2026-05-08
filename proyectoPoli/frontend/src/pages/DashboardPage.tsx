@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { useAccessToken } from "@/contexts/AuthContext";
-import { HabitosConsumoSection } from "@/components/HabitosConsumoSection";
 import { AnalyticsCorridasSection } from "@/components/AnalyticsCorridasSection";
 import { AnalyticsDashboardSection } from "@/components/AnalyticsDashboardSection";
+import { AnalisisIntegralConsumoSection } from "@/components/AnalisisIntegralConsumoSection";
 import { apiErrorMessage } from "@/utils/apiFetch";
 import { formatIsoDateToDMY } from "@/utils/dateFormat";
 
@@ -12,8 +11,25 @@ const API_DASHBOARD = "/api/dashboard/";
 interface DashboardData {
   solicitudes_por_estado: Record<string, number>;
   tiempo_promedio_aprobacion_dias: number;
-  top_insumos_solicitados: { producto_sku: string; producto_nombre: string; cantidad_total: number }[];
   productos_stock_critico: number;
+  stock_critico?: {
+    resumen: {
+      total_productos_criticos: number;
+      total_sin_stock: number;
+      total_cobertura_baja: number;
+    };
+    resultados: Array<{
+      producto_id: number;
+      nombre: string;
+      sku: string;
+      stock_actual: number;
+      stock_minimo: number;
+      cobertura_dias: number | null;
+      cobertura_texto: string;
+      riesgo: "Alto" | "Medio" | "Bajo";
+      recomendacion: string;
+    }>;
+  };
   filtro_desde: string;
   filtro_hasta: string;
 }
@@ -31,8 +47,10 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
+  const [desdeDraft, setDesdeDraft] = useState("");
+  const [hastaDraft, setHastaDraft] = useState("");
+  const [desdeFiltro, setDesdeFiltro] = useState("");
+  const [hastaFiltro, setHastaFiltro] = useState("");
 
   const fetchDashboard = async () => {
     if (!token) {
@@ -41,8 +59,8 @@ export function DashboardPage() {
       return;
     }
     const params = new URLSearchParams();
-    if (desde) params.set("desde", desde);
-    if (hasta) params.set("hasta", hasta);
+    if (desdeFiltro) params.set("desde", desdeFiltro);
+    if (hastaFiltro) params.set("hasta", hastaFiltro);
     const url = params.toString() ? `${API_DASHBOARD}?${params}` : API_DASHBOARD;
     try {
       setError(null);
@@ -62,7 +80,7 @@ export function DashboardPage() {
   useEffect(() => {
     setLoading(true);
     fetchDashboard();
-  }, [token, desde, hasta]);
+  }, [token, desdeFiltro, hastaFiltro]);
 
   if (loading) {
     return (
@@ -79,6 +97,9 @@ export function DashboardPage() {
     );
   }
   if (!data) return null;
+  const stockCritico = data.stock_critico;
+  const stockCriticoResumen = stockCritico?.resumen;
+  const stockCriticoRows = stockCritico?.resultados ?? [];
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
@@ -89,18 +110,29 @@ export function DashboardPage() {
           <input
             type="date"
             data-testid="dashboard-fecha-desde"
-            value={desde}
-            onChange={(e) => setDesde(e.target.value)}
+            value={desdeDraft}
+            onChange={(e) => setDesdeDraft(e.target.value)}
             className="rounded border border-gray-300 text-sm p-1.5"
           />
           <label className="text-sm text-gray-600 ml-2">Hasta</label>
           <input
             type="date"
             data-testid="dashboard-fecha-hasta"
-            value={hasta}
-            onChange={(e) => setHasta(e.target.value)}
+            value={hastaDraft}
+            onChange={(e) => setHastaDraft(e.target.value)}
             className="rounded border border-gray-300 text-sm p-1.5"
           />
+          <button
+            type="button"
+            data-testid="dashboard-filtrar"
+            onClick={() => {
+              setDesdeFiltro(desdeDraft);
+              setHastaFiltro(hastaDraft);
+            }}
+            className="ml-2 rounded bg-blue-600 text-white text-sm px-3 py-1.5 hover:bg-blue-700"
+          >
+            Filtrar
+          </button>
         </div>
       </div>
 
@@ -123,48 +155,73 @@ export function DashboardPage() {
           <h3 className="text-sm font-medium text-gray-500 uppercase">Tiempo promedio aprobación</h3>
           <p className="mt-2 text-2xl font-bold text-gray-800">{data.tiempo_promedio_aprobacion_dias} días</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-red-500">
-          <h3 className="text-sm font-medium text-gray-500 uppercase">Productos con stock crítico</h3>
-          <p className="mt-2 text-2xl font-bold text-red-700">{data.productos_stock_critico}</p>
-          <Link to="/products" className="text-sm text-blue-600 hover:underline mt-1 inline-block">
-            Ver productos  →
-          </Link>
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-red-500" data-testid="dashboard-stock-critico-card">
+          <h3 className="text-sm font-medium text-gray-500 uppercase">PRODUCTOS CON STOCK CRÍTICO</h3>
+          <p className="mt-2 text-2xl font-bold text-red-700">
+            {stockCriticoResumen?.total_productos_criticos ?? data.productos_stock_critico} productos requieren atención
+          </p>
+          <div className="mt-2 text-sm text-gray-600 space-y-0.5">
+            <p>Sin stock: {stockCriticoResumen?.total_sin_stock ?? 0}</p>
+            <p>Stock para 7 días o menos: {stockCriticoResumen?.total_cobertura_baja ?? 0}</p>
+          </div>
         </div>
       </div>
 
-      <AnalyticsDashboardSection token={token} desde={desde} hasta={hasta} />
-
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <h3 className="px-4 py-3 bg-gray-50 text-sm font-medium text-gray-700 uppercase">Top 10 insumos solicitados</h3>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
-              <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
-              <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad total</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {data.top_insumos_solicitados.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="px-6 py-4 text-center text-sm text-gray-500">
-                  No hay datos en el período seleccionado.
-                </td>
-              </tr>
-            ) : (
-              data.top_insumos_solicitados.map((item, idx) => (
-                <tr key={idx} className="hover:bg-gray-50">
-                  <td className="px-6 py-3 text-sm text-gray-900">{item.producto_sku}</td>
-                  <td className="px-6 py-3 text-sm text-gray-700">{item.producto_nombre}</td>
-                  <td className="px-6 py-3 text-sm text-gray-900 font-semibold text-center">{item.cantidad_total}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="dashboard-stock-critico-section">
+        <div className="p-4">
+          {stockCriticoRows.length === 0 ? (
+            <p className="text-sm text-gray-500" data-testid="dashboard-stock-critico-empty">
+              No hay productos en estado crítico actualmente.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-gray-200" data-testid="dashboard-stock-critico-table">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Insumo</th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Stock actual</th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Stock mínimo</th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Días estimados de stock</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Riesgo</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recomendación</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {stockCriticoRows.map((row) => (
+                    <tr key={row.producto_id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-medium text-gray-900">{row.nombre}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">SKU {row.sku}</div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center text-gray-900">{row.stock_actual}</td>
+                      <td className="px-4 py-3 text-sm text-center text-gray-900">{row.stock_minimo}</td>
+                      <td className="px-4 py-3 text-sm text-center text-gray-800">{row.cobertura_texto}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${
+                            row.riesgo === "Alto"
+                              ? "bg-red-100 text-red-800 border-red-200"
+                              : row.riesgo === "Medio"
+                                ? "bg-amber-100 text-amber-800 border-amber-200"
+                                : "bg-emerald-100 text-emerald-800 border-emerald-200"
+                          }`}
+                        >
+                          {row.riesgo}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">{row.recomendacion}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
-      <HabitosConsumoSection token={token} desde={desde} hasta={hasta} />
+      <AnalyticsDashboardSection token={token} desde={desdeFiltro} hasta={hastaFiltro} />
+
+      <AnalisisIntegralConsumoSection token={token} desde={desdeFiltro} hasta={hastaFiltro} />
       <AnalyticsCorridasSection token={token} />
     </div>
   );
