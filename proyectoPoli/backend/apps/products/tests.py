@@ -47,6 +47,15 @@ class FuncionarioCatalogoTests(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_funcionario_no_editar_producto(self):
+        self.client.force_authenticate(self.func)
+        r = self.client.patch(
+            f"/api/products/productos/{self.producto.id}/",
+            {"nombre": "Cambiado"},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_compras_puede_crear_producto(self):
         self.client.force_authenticate(self.compras)
         r = self.client.post(
@@ -55,6 +64,18 @@ class FuncionarioCatalogoTests(TestCase):
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+
+    def test_compras_puede_editar_producto(self):
+        self.client.force_authenticate(self.compras)
+        r = self.client.patch(
+            f"/api/products/productos/{self.producto.id}/",
+            {"nombre": "Actualizado", "stock_minimo": 5},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.producto.refresh_from_db()
+        self.assertEqual(self.producto.nombre, "Actualizado")
+        self.assertEqual(self.producto.stock_minimo, 5)
 
     def test_funcionario_no_estadisticas_ni_inventario(self):
         self.client.force_authenticate(self.func)

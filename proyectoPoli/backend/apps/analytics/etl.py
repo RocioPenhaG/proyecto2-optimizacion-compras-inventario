@@ -2,8 +2,8 @@
 Proceso ETL: extrae de MovStock, carga en HechoConsumo (agregado por producto/fecha/tipo).
 
 Ejecución manual: ``manage.py run_etl_analitico`` o llamada directa a ``ejecutar_etl_analitico``.
-Ejecución automática D-1: tarea Celery ``run_etl_analitico_d1`` programada con Celery Beat
-(ver ``CELERY_BEAT_SCHEDULE`` en settings); procesa solo el día anterior en zona configurada.
+Ejecución automática D-1: tarea Celery ``run_etl_analitico_d1`` con ``metodo=SCHEDULED`` en
+``CELERY_BEAT_SCHEDULE`` (settings); ejecución manual usa ``metodo=MANUAL`` (valor por defecto).
 """
 from collections import defaultdict
 from datetime import datetime, timedelta

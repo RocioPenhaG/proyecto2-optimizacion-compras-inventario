@@ -325,19 +325,38 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
         )}
       </div>
 
-      {loading && <p className="text-sm text-gray-500">Cargando análisis integral...</p>}
-      {!loading && error && <p className="text-sm text-red-500">{error}</p>}
+      {loading && (
+        <p className="text-sm text-gray-500" data-testid="analisis-loading">
+          Cargando análisis integral...
+        </p>
+      )}
+      {!loading && error && (
+        <p className="text-sm text-red-500" data-testid="analisis-error">
+          {error}
+        </p>
+      )}
+
+      {!loading && !error && habitos &&
+        consumo_mensual.length === 0 &&
+        consumo_por_dia_semana.length === 0 && (
+          <p
+            className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2"
+            data-testid="analisis-sin-datos-periodo"
+          >
+            No hay datos suficientes para analizar el consumo en el período seleccionado.
+          </p>
+        )}
 
       {!loading && !error && (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg shadow p-4">
+            <div className="bg-white rounded-lg shadow p-4" data-testid="analisis-chart-mensual">
               <h4 className="text-sm font-bold text-gray-800 mb-3">Consumo mensual</h4>
               <div className="h-80">
                 <Bar data={chartMensual} options={optsMensual} />
               </div>
             </div>
-            <div className="bg-white rounded-lg shadow p-4">
+            <div className="bg-white rounded-lg shadow p-4" data-testid="analisis-chart-dia-semana">
               <h4 className="text-sm font-bold text-gray-800 mb-3">Consumo por día de la semana</h4>
               <div className="h-80">
                 <Bar data={chartDiaSemana} options={optsDiaSemana} />
@@ -345,7 +364,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="analisis-resumen-periodo">
             {!ocultarTarjetasMesExtremo && (
               <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500">
                 <p className="text-xs uppercase text-gray-500">Mes con mayor consumo</p>
@@ -372,7 +391,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow p-4 border border-gray-100">
+          <div className="bg-white rounded-lg shadow p-4 border border-gray-100" data-testid="analisis-lectura-periodo">
             <h4 className="text-sm font-medium text-gray-700 uppercase">Lectura del período</h4>
             <ul className="mt-3 text-sm text-gray-700 space-y-1">
               <li>El mes seleccionado tuvo {totalMesSeleccionado} unidades consumidas.</li>
@@ -383,12 +402,13 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
             </ul>
           </div>
 
-          <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="analisis-por-producto">
             <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
               <h4 className="text-sm font-medium text-gray-700 uppercase">Análisis por producto</h4>
-              <div className="mt-3 inline-flex rounded-md border border-gray-200 overflow-hidden">
+              <div className="mt-3 inline-flex rounded-md border border-gray-200 overflow-hidden" data-testid="analisis-tabs">
                 <button
                   type="button"
+                  data-testid="analisis-tab-inteligente"
                   onClick={() => setTabActiva("analisis_inteligente")}
                   className={`px-3 py-1.5 text-sm ${tabActiva === "analisis_inteligente" ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
                 >
@@ -396,6 +416,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                 </button>
                 <button
                   type="button"
+                  data-testid="analisis-tab-productos-mes"
                   onClick={() => setTabActiva("productos_mes")}
                   className={`px-3 py-1.5 text-sm border-l border-gray-200 ${tabActiva === "productos_mes" ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
                 >
@@ -406,13 +427,14 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
 
             <div className="p-4">
               {tabActiva === "productos_mes" && (
-                <div className="space-y-3">
+                <div className="space-y-3" data-testid="analisis-tab-productos-mes-panel">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
                     {!ocultarTarjetasMesExtremo && (
                       <label className="text-xs text-gray-600">
                         Mes:
                         <select
+                          data-testid="analisis-mes-select"
                           value={mesSeleccionado}
                           onChange={(e) => setMesSeleccionado(e.target.value)}
                           className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 bg-white"
@@ -425,7 +447,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                       </label>
                     )}
                   </div>
-                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200" data-testid="analisis-productos-mes-tabla">
                     <table className="min-w-full divide-y divide-gray-200">
                       <thead className="bg-gray-50">
                         <tr>
@@ -455,12 +477,14 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
               )}
 
               {tabActiva === "analisis_inteligente" && (
-                <div className="space-y-4">
+                <div className="space-y-4" data-testid="analisis-tab-inteligente-panel">
                   {!inteligente || inteligente.resultados.length === 0 ? (
-                    <p className="text-sm text-gray-500">No hay datos suficientes para generar el análisis inteligente en el período seleccionado.</p>
+                    <p className="text-sm text-gray-500" data-testid="analisis-inteligente-empty">
+                      No hay datos suficientes para generar el análisis inteligente en el período seleccionado.
+                    </p>
                   ) : (
                     <>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 items-stretch">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 items-stretch" data-testid="analisis-inteligente-resumen">
                         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500 flex flex-col h-full">
                           <div className={RESUMEN_TITLE_BLOCK}>
                             <p className={`${RESUMEN_CARD_TITLE} line-clamp-2`}>Riesgo alto de desabastecimiento</p>
@@ -508,7 +532,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                         </div>
                       </div>
 
-                      <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <div className="overflow-x-auto rounded-lg border border-gray-200" data-testid="analisis-inteligente-tabla">
                         <table className="min-w-full divide-y divide-gray-200">
                           <thead className="bg-gray-50">
                             <tr>
@@ -522,7 +546,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
                             {inteligente.resultados.map((row) => (
-                              <tr key={row.producto_id} className="hover:bg-gray-50">
+                              <tr key={row.producto_id} data-testid={`analisis-inteligente-row-${row.producto_id}`} className="hover:bg-gray-50">
                                 <td className="px-4 py-3">
                                   <div className="text-sm font-medium text-gray-900">{row.nombre}</div>
                                   <div className="text-xs text-gray-500 mt-0.5">SKU {row.sku}</div>

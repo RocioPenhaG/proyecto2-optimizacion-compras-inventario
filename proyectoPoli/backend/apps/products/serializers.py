@@ -22,10 +22,19 @@ class ProductoSerializer(serializers.ModelSerializer):
             validated_data["sku"] = str(validated_data["sku"]).strip()
         return super().create(validated_data)
 
+    def update(self, instance, validated_data):
+        if "sku" in validated_data:
+            if not str(validated_data.get("sku", "")).strip():
+                validated_data.pop("sku", None)
+            else:
+                validated_data["sku"] = str(validated_data["sku"]).strip()
+        return super().update(instance, validated_data)
+
     def get_stock_actual(self, obj):
-        if hasattr(obj, 'stock'):
-            return obj.stock.qty_on_hand
-        return 0
+        try:
+            return int(obj.stock.qty_on_hand)
+        except Exception:
+            return 0
 
 
 class ProductoCatalogoSerializer(serializers.ModelSerializer):

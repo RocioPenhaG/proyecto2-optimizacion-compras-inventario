@@ -9,6 +9,7 @@ interface Product {
   categoria: string;
   stock_actual?: number;
   stock_minimo?: number;
+  proveedor?: number | null;
   proveedor_nombre: string | null;
 }
 
@@ -26,8 +27,9 @@ export function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Estados para el Modal
+  // Estados para el Modal (crear o editar)
   const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({
     sku: "",
@@ -69,11 +71,46 @@ export function ProductsPage() {
     fetchData();
   }, [token, isFuncionario]);
 
+  const emptyForm = () =>
+    setFormData({
+      sku: "",
+      nombre: "",
+      unidad: "UNIDAD",
+      categoria: "",
+      stock_minimo: 0,
+      proveedor: "",
+    });
+
+  const openCreateModal = () => {
+    setEditingId(null);
+    emptyForm();
+    setShowModal(true);
+  };
+
+  const openEditModal = (p: Product) => {
+    setEditingId(p.id);
+    setFormData({
+      sku: p.sku ?? "",
+      nombre: p.nombre,
+      unidad: p.unidad || "UNIDAD",
+      categoria: p.categoria ?? "",
+      stock_minimo: Number(p.stock_minimo ?? 0),
+      proveedor: p.proveedor != null ? String(p.proveedor) : "",
+    });
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setEditingId(null);
+    emptyForm();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || isFuncionario) return;
     setSaving(true);
-    
+
     try {
       const skuTrim = formData.sku.trim();
       const payload: Record<string, string | number | null> = {
@@ -85,13 +122,19 @@ export function ProductsPage() {
       };
       if (skuTrim) payload.sku = skuTrim;
 
-      const res = await fetch("/api/products/productos/", {
-        method: "POST",
-        headers: { 
+      const url =
+        editingId != null
+          ? `/api/products/productos/${editingId}/`
+          : "/api/products/productos/";
+      const method = editingId != null ? "PATCH" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}` 
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -99,10 +142,8 @@ export function ProductsPage() {
         throw new Error(JSON.stringify(errData));
       }
 
-      // Recargar lista y cerrar modal
       await fetchData();
-      setShowModal(false);
-      setFormData({ sku: "", nombre: "", unidad: "UNIDAD", categoria: "", stock_minimo: 0, proveedor: "" });
+      closeModal();
     } catch (err) {
       alert("Error al guardar: " + (err instanceof Error ? err.message : "Error"));
     } finally {
@@ -120,7 +161,7 @@ export function ProductsPage() {
         {!isFuncionario && (
           <button
             type="button"
-            onClick={() => setShowModal(true)}
+            onClick={openCreateModal}
             className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
           >
             Nuevo Producto
@@ -139,10 +180,13 @@ export function ProductsPage() {
               {!isFuncionario && (
                 <>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Stock Actual
+                    Stock (actual / mín.)
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Estado stock
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Acciones
                   </th>
                 </>
               )}
@@ -150,9 +194,10 @@ export function ProductsPage() {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {products.map((p) => {
-              const stockMin = p.stock_minimo ?? 0;
-              const stockAct = p.stock_actual ?? 0;
-              const esCritico = !isFuncionario && stockMin > 0 && stockAct < stockMin;
+              const stockMin = Number(p.stock_minimo ?? 0);
+              const stockAct = Number(p.stock_actual ?? 0);
+              const esCritico =
+                !isFuncionario && stockMin > 0 && stockAct <= stockMin;
               return (
                 <tr key={p.id} className={esCritico ? "hover:bg-red-50 bg-red-50/50" : "hover:bg-gray-50"}>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{p.sku}</td>
@@ -161,15 +206,17 @@ export function ProductsPage() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{p.proveedor_nombre || "Sin proveedor"}</td>
                   {!isFuncionario && (
                     <>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                        {stockAct} {p.unidad}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <span className="font-semibold">
+                          {stockAct} {p.unidad}
+                        </span>
+                        <span className="text-gray-500 font-normal ml-2">
+                          mín. {stockMin} {p.unidad}
+                        </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {esCritico ? (
-                          <span
-                            className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800"
-                            title={`Mínimo: ${stockMin}`}
-                          >
+                          <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800">
                             Crítico
                           </span>
                         ) : (
@@ -177,6 +224,15 @@ export function ProductsPage() {
                             OK
                           </span>
                         )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(p)}
+                          className="text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          Editar
+                        </button>
                       </td>
                     </>
                   )}
@@ -186,7 +242,7 @@ export function ProductsPage() {
             {products.length === 0 && (
               <tr>
                 <td
-                  colSpan={isFuncionario ? 4 : 6}
+                  colSpan={isFuncionario ? 4 : 7}
                   className="px-6 py-4 text-center text-sm text-gray-500"
                 >
                   No hay productos registrados.
@@ -201,7 +257,9 @@ export function ProductsPage() {
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold mb-4">Crear Nuevo Producto</h3>
+            <h3 className="text-lg font-bold mb-4">
+              {editingId != null ? "Editar producto" : "Crear Nuevo Producto"}
+            </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -212,7 +270,15 @@ export function ProductsPage() {
                     placeholder="Vacío = SPK-0001, SPK-0002…"
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border p-2"
                   />
-                  <p className="mt-1 text-xs text-gray-500">Si lo deja vacío, el sistema asigna un código automático.</p>
+                  {editingId == null ? (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Si lo deja vacío, el sistema asigna un código automático.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Deje el SKU vacío para conservar el actual.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Categoría</label>
@@ -247,11 +313,19 @@ export function ProductsPage() {
               </div>
 
               <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-400">
-                  {saving ? "Guardando..." : "Guardar Producto"}
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-4 py-2 bg-blue-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-400"
+                >
+                  {saving ? "Guardando..." : editingId != null ? "Guardar cambios" : "Guardar Producto"}
                 </button>
               </div>
             </form>

@@ -41,14 +41,14 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
     await expect(chartBox.locator("canvas").or(page.getByTestId("analytics-top-consumidos-empty"))).toBeVisible();
   });
 
-  // Hábitos de consumo: serie mensual agregada.
+  // Análisis integral de consumo: serie mensual agregada (reemplaza Hábitos de consumo).
   test("visualización de gráfico de consumo mensual", async ({ page }) => {
-    await expect(page.getByTestId("habitos-chart-mensual").locator("canvas")).toBeVisible();
+    await expect(page.getByTestId("analisis-chart-mensual").locator("canvas")).toBeVisible();
   });
 
-  // Hábitos de consumo: distribución por día de la semana.
+  // Análisis integral de consumo: distribución por día de la semana (reemplaza Hábitos de consumo).
   test("visualización de consumo por día de la semana", async ({ page }) => {
-    await expect(page.getByTestId("habitos-chart-dia-semana").locator("canvas")).toBeVisible();
+    await expect(page.getByTestId("analisis-chart-dia-semana").locator("canvas")).toBeVisible();
   });
 
   // Tabla de corridas registradas por el ETL (vacía o con filas).
@@ -77,14 +77,15 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
     }
   });
 
-  // Período sin movimientos OUT: avisos coherentes en analítica y hábitos.
+  // Período sin movimientos OUT: avisos coherentes en analítica e integral de consumo.
   test("caso sin datos analíticos disponibles en el período", async ({ page }) => {
     await page.getByTestId("dashboard-fecha-desde").fill("2099-01-01");
     await page.getByTestId("dashboard-fecha-hasta").fill("2099-01-31");
+    await page.getByTestId("dashboard-filtrar").click();
     await expect(
-      page.getByTestId("analytics-no-salidas-banner").or(page.getByTestId("analytics-top-consumidos-empty")),
+      page.getByTestId("analytics-no-salidas-banner").or(page.getByTestId("analytics-top-consumidos-empty")).first(),
     ).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("habitos-sin-datos-periodo")).toBeVisible();
+    await expect(page.getByTestId("analisis-sin-datos-periodo")).toBeVisible({ timeout: 30_000 });
   });
 });
 

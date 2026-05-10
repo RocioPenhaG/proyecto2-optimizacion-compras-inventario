@@ -18,10 +18,10 @@ def estadisticas_productos(request):
 
     def es_critico(p):
         try:
-            qty = p.stock.qty_on_hand if p.stock else 0
+            qty = int(p.stock.qty_on_hand)
         except Exception:
             qty = 0
-        return qty < p.stock_minimo
+        return qty <= p.stock_minimo
 
     count = sum(1 for p in productos if es_critico(p))
     return Response({"productos_stock_critico": count})
@@ -33,7 +33,7 @@ class ProveedorViewSet(viewsets.ModelViewSet):
 
 
 class ProductoViewSet(viewsets.ModelViewSet):
-    queryset = Producto.objects.select_related("proveedor").all()
+    queryset = Producto.objects.select_related("proveedor", "stock").all()
     permission_classes = [IsAuthenticated, ProductoProveedorWriteOrReadOnly]
 
     def get_serializer_class(self):

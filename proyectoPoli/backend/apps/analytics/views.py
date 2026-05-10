@@ -694,7 +694,7 @@ def ejecutar_etl_d1(request):
         task_id=task_id,
         estado=CorridaAnalitica.Estado.QUEUED,
         queued_at=timezone.now(),
-        metodo=CorridaAnalitica.Metodo.API,
+        metodo=CorridaAnalitica.Metodo.MANUAL,
         fecha_desde=ayer,
         fecha_hasta=ayer,
         parametros={"fecha_desde": str(ayer), "fecha_hasta": str(ayer), "scope": "D-1"},
@@ -702,7 +702,10 @@ def ejecutar_etl_d1(request):
         error_detalle="",
         ejecutado_por=request.user,
     )
-    run_etl_analitico_d1.apply_async(task_id=task_id)
+    run_etl_analitico_d1.apply_async(
+        task_id=task_id,
+        kwargs={"metodo": CorridaAnalitica.Metodo.MANUAL},
+    )
     return Response(
         {
             "message": "Corrida ETL D-1 encolada correctamente.",

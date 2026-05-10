@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -14,6 +15,7 @@ from apps.purchases.models import SolicitudDetalle, SolicitudInsumo
 
 from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
 from .etl import ejecutar_etl_analitico, actualizar_resumen_consumo_mensual, _fecha_mov_local
+from .tasks import run_etl_analitico_d1
 
 
 class ETLTestCase(TestCase):
@@ -384,6 +386,26 @@ class AnalyticsAPITestCase(TestCase):
         self.assertIn("metodo", resp.json()["corrida"])
 
 
+class RunEtlAnaliticoD1MetodoTestCase(TestCase):
+    """Origen de corrida: MANUAL por defecto; SCHEDULED solo con kwarg (p. ej. Celery Beat)."""
+
+    @patch("apps.analytics.tasks.ejecutar_etl_analitico", side_effect=lambda **kw: kw["corrida"])
+    def test_run_d1_sin_metodo_registra_manual(self, _mock_etl):
+        run_etl_analitico_d1.run()
+        corrida = CorridaAnalitica.objects.get()
+        self.assertEqual(corrida.metodo, CorridaAnalitica.Metodo.MANUAL)
+
+    @patch("apps.analytics.tasks.ejecutar_etl_analitico", side_effect=lambda **kw: kw["corrida"])
+    def test_run_d1_metodo_scheduled_como_beat(self, _mock_etl):
+        run_etl_analitico_d1.run(metodo=CorridaAnalitica.Metodo.SCHEDULED)
+        corrida = CorridaAnalitica.objects.get()
+        self.assertEqual(corrida.metodo, CorridaAnalitica.Metodo.SCHEDULED)
+
+    def test_celery_beat_schedule_pasa_metodo_scheduled(self):
+        entry = settings.CELERY_BEAT_SCHEDULE["etl-analitico-d1-diario"]
+        self.assertEqual(entry["kwargs"], {"metodo": "SCHEDULED"})
+
+
 class AnalyticsCorridaETLTestCase(TestCase):
     """Encolado D-1, estado por task_id y permisos de corridas."""
 
@@ -403,9 +425,13 @@ class AnalyticsCorridaETLTestCase(TestCase):
         self.assertEqual(body["status"], "QUEUED")
         mock_apply.assert_called_once()
         self.assertEqual(mock_apply.call_args.kwargs.get("task_id"), task_id)
+        self.assertEqual(
+            mock_apply.call_args.kwargs.get("kwargs"),
+            {"metodo": CorridaAnalitica.Metodo.MANUAL},
+        )
         corrida = CorridaAnalitica.objects.get(task_id=task_id)
         self.assertEqual(corrida.estado, CorridaAnalitica.Estado.QUEUED)
-        self.assertEqual(corrida.metodo, CorridaAnalitica.Metodo.API)
+        self.assertEqual(corrida.metodo, CorridaAnalitica.Metodo.MANUAL)
         self.assertIsNotNone(corrida.queued_at)
 
     @patch("apps.analytics.views.run_etl_analitico_d1.apply_async")

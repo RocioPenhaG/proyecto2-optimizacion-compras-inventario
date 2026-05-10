@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useAccessToken } from "@/contexts/AuthContext";
 
+const BUSCAR_DEBOUNCE_MS = 400;
+
 interface Movement {
   id: number;
   fecha: string;
@@ -9,6 +11,8 @@ interface Movement {
   producto_nombre: string;
   usuario_nombre: string;
   observacion: string;
+  /** Stock vigente del producto (mismo valor para todas las filas de ese producto). */
+  stock_actual?: number;
 }
 
 interface Product {
@@ -29,6 +33,8 @@ export function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ordenFecha, setOrdenFecha] = useState<"desc" | "asc">("desc");
+  const [buscarInput, setBuscarInput] = useState("");
+  const [buscarQuery, setBuscarQuery] = useState("");
 
   // Estados Modal
   const [showModal, setShowModal] = useState(false);
@@ -48,6 +54,9 @@ export function InventoryPage() {
         orden_fecha: ordenFecha,
         page: String(movementsPage),
       });
+      if (buscarQuery) {
+        movParams.set("buscar", buscarQuery);
+      }
       const movsUrl = `/api/inventory/movimientos/?${movParams.toString()}`;
       const [resMov, resProd] = await Promise.all([
         fetch(movsUrl, { headers: { Authorization: `Bearer ${token}` } }),
@@ -78,7 +87,20 @@ export function InventoryPage() {
       return;
     }
     void fetchData(page);
-  }, [token, ordenFecha, page]);
+  }, [token, ordenFecha, page, buscarQuery]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setBuscarQuery((prev) => {
+        const next = buscarInput.trim();
+        if (prev !== next) {
+          setPage(1);
+        }
+        return next;
+      });
+    }, BUSCAR_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [buscarInput]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -157,6 +179,39 @@ export function InventoryPage() {
         </div>
       </div>
 
+      <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 shadow-sm">
+        <label htmlFor="buscar-producto-mov" className="block text-sm font-medium text-gray-700 mb-1">
+          Buscar por producto
+        </label>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <input
+            id="buscar-producto-mov"
+            type="search"
+            value={buscarInput}
+            onChange={(e) => setBuscarInput(e.target.value)}
+            placeholder="Nombre o SKU, ej. Pilas AA"
+            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-green-500 focus:ring-1 focus:ring-green-500"
+            autoComplete="off"
+          />
+          {buscarInput.trim() !== "" && (
+            <button
+              type="button"
+              onClick={() => {
+                setBuscarInput("");
+                setBuscarQuery("");
+                setPage(1);
+              }}
+              className="shrink-0 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              Limpiar
+            </button>
+          )}
+        </div>
+        <p className="mt-1.5 text-xs text-gray-500">
+          Se muestran solo movimientos cuyo producto coincide con el texto (nombre o código).
+        </p>
+      </div>
+
       <div className="bg-white shadow overflow-hidden sm:rounded-lg">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -164,7 +219,10 @@ export function InventoryPage() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Producto</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cantidad</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <span className="block">Cantidad</span>
+                <span className="block font-normal normal-case text-gray-400">Stock actual</span>
+              </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
             </tr>
           </thead>
@@ -184,15 +242,28 @@ export function InventoryPage() {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{m.producto_nombre}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
-                  {m.tipo === 'OUT' ? '-' : '+'}{m.cantidad}
+                <td className="px-6 py-4 whitespace-nowrap text-sm align-top">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-gray-900 font-bold tabular-nums">
+                      {m.tipo === "OUT" ? "-" : "+"}
+                      {m.cantidad}
+                    </span>
+                    <span className="text-gray-500 font-normal text-xs tabular-nums">
+                      · stock{" "}
+                      {typeof m.stock_actual === "number" ? m.stock_actual : "—"}
+                    </span>
+                  </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{m.usuario_nombre}</td>
               </tr>
             ))}
             {movements.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">No hay movimientos registrados.</td>
+                <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                  {buscarQuery
+                    ? `No hay movimientos que coincidan con «${buscarQuery}».`
+                    : "No hay movimientos registrados."}
+                </td>
               </tr>
             )}
           </tbody>

@@ -1,3 +1,5 @@
+from django.db.models import Q
+
 from rest_framework import viewsets, mixins
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -33,14 +35,22 @@ class MovStockViewSet(viewsets.ModelViewSet):
     Al crear un movimiento, la lógica del modelo actualiza la tabla StockProducto automáticamente.
 
     Listado (GET): respuesta paginada (20 ítems por defecto); ``?page=2`` y opcional ``page_size``.
+    Filtro de producto: ``?buscar=texto`` coincide con nombre o SKU (insensible a mayúsculas).
     """
-    queryset = MovStock.objects.select_related("producto", "usuario").all().order_by("-fecha")
+    queryset = MovStock.objects.select_related("producto", "producto__stock", "usuario").all().order_by(
+        "-fecha"
+    )
     serializer_class = MovStockSerializer
     permission_classes = [IsAuthenticated, IsNotFuncionario]
     pagination_class = MovStockPagination
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        buscar = self.request.query_params.get("buscar", "").strip()
+        if buscar:
+            queryset = queryset.filter(
+                Q(producto__nombre__icontains=buscar) | Q(producto__sku__icontains=buscar)
+            )
         orden_fecha = self.request.query_params.get("orden_fecha", "desc").strip().lower()
         if orden_fecha == "asc":
             return queryset.order_by("fecha")

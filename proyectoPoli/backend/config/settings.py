@@ -152,6 +152,7 @@ CELERY_BEAT_SCHEDULE = {
     "etl-analitico-d1-diario": {
         "task": "apps.analytics.tasks.run_etl_analitico_d1",
         "schedule": crontab(hour=_etl_hour, minute=_etl_minute),
+        "kwargs": {"metodo": "SCHEDULED"},
     },
 }
 
