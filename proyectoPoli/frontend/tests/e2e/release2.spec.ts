@@ -60,6 +60,10 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
     ).toBeVisible();
   });
 
+  test("sin pestaña de proyección de consumo en navegación", async ({ page }) => {
+    await expect(page.getByTestId("nav-proyecciones")).toHaveCount(0);
+  });
+
   // Panel de tendencias: tabla de coeficientes o mensaje; con datos, gráfico de línea y predicción.
   test("visualización de tendencias lineales", async ({ page }) => {
     await expect(page.getByTestId("tendencias-lineales-panel")).toBeVisible();
@@ -73,15 +77,20 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
     });
     if (await panelVisual.isVisible()) {
       await expect(page.getByTestId("tendencias-chart-linea").locator("canvas")).toBeVisible();
-      await expect(page.getByTestId("tendencias-prediccion-texto")).toContainText("Predicción siguiente");
+      await expect(page.getByTestId("tendencias-prediccion-texto")).toContainText("tendencia lineal");
+      await expect(
+        page.getByTestId("tendencias-chart-linea"),
+      ).toBeVisible();
     }
   });
 
   // Período sin movimientos OUT: avisos coherentes en analítica e integral de consumo.
   test("caso sin datos analíticos disponibles en el período", async ({ page }) => {
-    await page.getByTestId("dashboard-fecha-desde").fill("2099-01-01");
-    await page.getByTestId("dashboard-fecha-hasta").fill("2099-01-31");
-    await page.getByTestId("dashboard-filtrar").click();
+    await page.getByTestId("analytics-period-select").selectOption("custom");
+    const panel = page.getByTestId("dashboard-filtro-fechas-panel");
+    await panel.getByTestId("dashboard-fecha-desde").fill("2099-01-01");
+    await panel.getByTestId("dashboard-fecha-hasta").fill("2099-01-31");
+    await panel.getByTestId("dashboard-filtrar").click();
     await expect(
       page.getByTestId("analytics-no-salidas-banner").or(page.getByTestId("analytics-top-consumidos-empty")).first(),
     ).toBeVisible({ timeout: 30_000 });

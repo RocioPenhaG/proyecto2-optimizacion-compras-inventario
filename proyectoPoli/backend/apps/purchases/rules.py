@@ -37,3 +37,13 @@ def solicitud_requiere_gerencia(solicitud) -> bool:
     if not solicitud_detalles_todos_vinculados(solicitud):
         return False
     return not solicitud_cubierta_por_stock(solicitud)
+
+
+def solicitud_alerta_proyeccion_consumo(solicitud) -> bool:
+    """Reservado por compatibilidad de API; ya no se usa proyección de consumo en solicitudes."""
+    return False
+
+
+def solicitud_alertas_proyeccion_detalle(solicitud):
+    """Reservado por compatibilidad de API; reposición según stock operativo, no proyección."""
+    return []

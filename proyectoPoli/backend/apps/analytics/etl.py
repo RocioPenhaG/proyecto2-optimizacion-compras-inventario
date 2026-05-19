@@ -14,7 +14,15 @@ from django.utils import timezone
 from django.db.models import Sum, Count
 from django.db.models.functions import ExtractMonth, ExtractYear, TruncDate
 from apps.inventory.models import MovStock
-from .models import CorridaAnalitica, HechoConsumo, ResumenConsumoMensual, ResultadoTendenciaLineal
+from .models import (
+    CorridaAnalitica,
+    HechoConsumo,
+    ProyeccionConsumoFuturo,
+    ResumenConsumoMensual,
+    ResultadoTendenciaLineal,
+)
+
+DEFAULT_PROYECCION_HORIZONTE_DIAS = 30
 
 
 def _fmt_fecha_dmY(d):
@@ -152,7 +160,88 @@ def _calcular_regresion_lineal(y_values):
     }
 
 
-def guardar_resultados_tendencia_lineal(corrida, fecha_desde=None, fecha_hasta=None, minimo_puntos=3):
+def generar_proyecciones_consumo(
+    intercepto,
+    pendiente,
+    puntos_usados,
+    fecha_fin,
+    horizonte_dias=DEFAULT_PROYECCION_HORIZONTE_DIAS,
+):
+    """
+    Proyecciones diarias de consumo para los próximos ``horizonte_dias`` días.
+    Usa el mismo eje temporal que la regresión (x = 0..n-1); el día h futuro es x = n + h - 1.
+    Los valores negativos se truncan a 0 (el consumo no puede ser negativo).
+    """
+    if horizonte_dias < 1:
+        return []
+    n = int(puntos_usados)
+    proyecciones = []
+    acumulado = 0.0
+    for h in range(1, int(horizonte_dias) + 1):
+        x = n + h - 1
+        valor = float(intercepto) + (float(pendiente) * x)
+        if valor < 0:
+            valor = 0.0
+        acumulado += valor
+        proyecciones.append(
+            {
+                "fecha": fecha_fin + timedelta(days=h),
+                "horizonte_dias": h,
+                "valor_diario": valor,
+                "consumo_acumulado": acumulado,
+            }
+        )
+    return proyecciones
+
+
+def guardar_proyecciones_consumo_futuro(corrida, horizonte_dias=DEFAULT_PROYECCION_HORIZONTE_DIAS):
+    """Persiste proyecciones diarias para cada tendencia de la corrida."""
+    ProyeccionConsumoFuturo.objects.filter(corrida=corrida).delete()
+    if horizonte_dias < 1:
+        return {"proyecciones_guardadas": 0}
+
+    tendencias = ResultadoTendenciaLineal.objects.filter(corrida=corrida).only(
+        "id",
+        "producto_id",
+        "intercepto",
+        "pendiente",
+        "puntos_usados",
+        "fecha_fin",
+    )
+    bulk = []
+    for tendencia in tendencias:
+        filas = generar_proyecciones_consumo(
+            tendencia.intercepto,
+            tendencia.pendiente,
+            tendencia.puntos_usados,
+            tendencia.fecha_fin,
+            horizonte_dias=horizonte_dias,
+        )
+        for fila in filas:
+            bulk.append(
+                ProyeccionConsumoFuturo(
+                    tendencia_id=tendencia.id,
+                    corrida_id=corrida.id,
+                    producto_id=tendencia.producto_id,
+                    fecha=fila["fecha"],
+                    horizonte_dias=fila["horizonte_dias"],
+                    valor_diario=fila["valor_diario"],
+                    consumo_acumulado=fila["consumo_acumulado"],
+                )
+            )
+
+    if bulk:
+        ProyeccionConsumoFuturo.objects.bulk_create(bulk)
+    return {"proyecciones_guardadas": len(bulk)}
+
+
+def guardar_resultados_tendencia_lineal(
+    corrida,
+    fecha_desde=None,
+    fecha_hasta=None,
+    minimo_puntos=3,
+    proyeccion_horizonte_dias=DEFAULT_PROYECCION_HORIZONTE_DIAS,
+):
     """
     Construye serie temporal diaria por producto (consumo OUT), calcula tendencia
     lineal por producto y persiste resultados vinculados a la corrida.
@@ -214,7 +303,13 @@ def guardar_resultados_tendencia_lineal(corrida, fecha_desde=None, fecha_hasta=N
     }
 
 
-def ejecutar_etl_analitico(fecha_desde=None, fecha_hasta=None, corrida=None, tendencia_ventana_dias=30):
+def ejecutar_etl_analitico(
+    fecha_desde=None,
+    fecha_hasta=None,
+    corrida=None,
+    tendencia_ventana_dias=30,
+    proyeccion_horizonte_dias=DEFAULT_PROYECCION_HORIZONTE_DIAS,
+):
     """
     Extrae movimientos de stock (opcionalmente en rango de fechas), agrega por
     producto + fecha (día) + tipo, y carga en HechoConsumo.
@@ -304,6 +399,7 @@ def ejecutar_etl_analitico(fecha_desde=None, fecha_hasta=None, corrida=None, ten
                 corrida=corrida,
                 fecha_desde=fecha_inicio_tendencia,
                 fecha_hasta=fecha_fin_tendencia,
+                proyeccion_horizonte_dias=proyeccion_horizonte_dias,
             )
 
             corrida.estado = CorridaAnalitica.Estado.SUCCESS
@@ -316,12 +412,13 @@ def ejecutar_etl_analitico(fecha_desde=None, fecha_hasta=None, corrida=None, ten
                 "tendencia_ventana_dias": tendencia_ventana_dias,
                 "fecha_inicio_ventana_tendencia": str(fecha_inicio_tendencia),
                 "fecha_fin_ventana_tendencia": str(fecha_fin_tendencia),
+                "proyeccion_horizonte_dias": proyeccion_horizonte_dias,
             }
             fi_txt = _fmt_fecha_dmY(fecha_inicio_tendencia)
             ff_txt = _fmt_fecha_dmY(fecha_fin_tendencia)
             corrida.mensaje = (
                 f"Procesados {len(bulk)} registros. "
-                f"Tendencias Guardadas: {tendencia['resultados_guardados']}. "
+                f"Tendencias guardadas: {tendencia['resultados_guardados']}. "
                 f"Evaluación del {fi_txt} al {ff_txt}."
             )
             corrida.error_detalle = ""

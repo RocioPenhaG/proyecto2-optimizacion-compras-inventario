@@ -54,6 +54,8 @@ class SolicitudInsumoSerializer(serializers.ModelSerializer):
     solicitante_nombre = serializers.CharField(source="solicitante.username", read_only=True)
     requiere_aprobacion_gerencia = serializers.SerializerMethodField()
     stock_cubre_solicitud = serializers.SerializerMethodField()
+    alerta_proyeccion_consumo = serializers.SerializerMethodField()
+    alertas_proyeccion = serializers.SerializerMethodField()
 
     class Meta:
         model = SolicitudInsumo
@@ -71,6 +73,8 @@ class SolicitudInsumoSerializer(serializers.ModelSerializer):
             "detalles",
             "requiere_aprobacion_gerencia",
             "stock_cubre_solicitud",
+            "alerta_proyeccion_consumo",
+            "alertas_proyeccion",
         )
         read_only_fields = (
             "solicitante",
@@ -79,6 +83,8 @@ class SolicitudInsumoSerializer(serializers.ModelSerializer):
             "aprobado_en",
             "requiere_aprobacion_gerencia",
             "stock_cubre_solicitud",
+            "alerta_proyeccion_consumo",
+            "alertas_proyeccion",
         )
 
     def get_requiere_aprobacion_gerencia(self, obj):
@@ -90,6 +96,16 @@ class SolicitudInsumoSerializer(serializers.ModelSerializer):
         from .rules import solicitud_cubierta_por_stock
 
         return solicitud_cubierta_por_stock(obj)
+
+    def get_alerta_proyeccion_consumo(self, obj):
+        from .rules import solicitud_alerta_proyeccion_consumo
+
+        return solicitud_alerta_proyeccion_consumo(obj)
+
+    def get_alertas_proyeccion(self, obj):
+        from .rules import solicitud_alertas_proyeccion_detalle
+
+        return solicitud_alertas_proyeccion_detalle(obj)
 
     def create(self, validated_data):
         detalles_data = validated_data.pop("detalles")
@@ -110,6 +126,7 @@ class SolicitudInsumoListSerializer(serializers.ModelSerializer):
     requiere_aprobacion_gerencia = serializers.SerializerMethodField()
     stock_cubre_solicitud = serializers.SerializerMethodField()
     pendiente_vincular_catalogo = serializers.SerializerMethodField()
+    alerta_proyeccion_consumo = serializers.SerializerMethodField()
 
     class Meta:
         model = SolicitudInsumo
@@ -126,6 +143,7 @@ class SolicitudInsumoListSerializer(serializers.ModelSerializer):
             "requiere_aprobacion_gerencia",
             "stock_cubre_solicitud",
             "pendiente_vincular_catalogo",
+            "alerta_proyeccion_consumo",
         )
 
     def get_cantidad_items(self, obj):
@@ -145,6 +163,11 @@ class SolicitudInsumoListSerializer(serializers.ModelSerializer):
         from .rules import solicitud_detalles_todos_vinculados
 
         return not solicitud_detalles_todos_vinculados(obj)
+
+    def get_alerta_proyeccion_consumo(self, obj):
+        from .rules import solicitud_alerta_proyeccion_consumo
+
+        return solicitud_alerta_proyeccion_consumo(obj)
 
 
 class SolicitudEstadoUpdateSerializer(serializers.Serializer):

@@ -14,6 +14,7 @@ from apps.users.models import Role
 from apps.purchases.models import SolicitudInsumo, EstadoSolicitud
 from apps.purchases.models import SolicitudDetalle
 from apps.products.models import Producto
+from apps.analytics.date_range import parse_fechas
 from apps.analytics.models import HechoConsumo
 
 
@@ -30,24 +31,19 @@ def dashboard_metrics(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    desde = request.query_params.get("desde")
-    hasta = request.query_params.get("hasta")
     try:
-        if desde:
-            fecha_desde = timezone.make_aware(datetime.strptime(desde, "%Y-%m-%d"))
-        else:
-            fecha_desde = timezone.now() - timedelta(days=90)
-        if hasta:
-            fecha_hasta = timezone.make_aware(
-                datetime.strptime(hasta + " 23:59:59", "%Y-%m-%d %H:%M:%S")
-            )
-        else:
-            fecha_hasta = timezone.now()
+        fecha_desde_date, fecha_hasta_date = parse_fechas(request)
     except ValueError:
         return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
+            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD en desde y hasta."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    fecha_desde = timezone.make_aware(datetime.combine(fecha_desde_date, datetime.min.time()))
+    fecha_hasta = timezone.make_aware(
+        datetime.strptime(fecha_hasta_date.strftime("%Y-%m-%d") + " 23:59:59", "%Y-%m-%d %H:%M:%S")
+    )
+    desde = str(fecha_desde_date)
+    hasta = str(fecha_hasta_date)
 
     qs_solicitudes = SolicitudInsumo.objects.filter(creado_en__range=(fecha_desde, fecha_hasta))
 
@@ -112,32 +108,24 @@ def dashboard_metrics(request):
         .annotate(cantidad_total=Sum("cantidad_total"))
     }
 
-    def _cobertura(stock_actual: int, consumo_promedio_diario: float):
-        if stock_actual <= 0:
-            return 0, "Sin stock"
-        if consumo_promedio_diario > 0:
-            cobertura = int(round(stock_actual / consumo_promedio_diario))
-            return cobertura, f"{cobertura} días"
-        if consumo_promedio_diario == 0:
-            return None, "Sin consumo reciente"
-        return None, "No disponible"
-
     def _riesgo_y_recomendacion(stock_actual: int, stock_minimo: int, cobertura_dias):
-        if stock_actual <= 0:
-            return "Alto", "Urgente"
+        if stock_actual <= 0 or cobertura_dias == 0:
+            return "Alto", "Reponer urgente"
         if cobertura_dias is not None and cobertura_dias <= 7:
             return "Alto", "Reponer pronto"
         if stock_actual <= stock_minimo:
             return "Medio", "Monitorear"
         if cobertura_dias is not None and 8 <= cobertura_dias <= 15:
             return "Medio", "Monitorear"
-        return "Bajo", "Mantener control"
+        return "Bajo", "Sin acción inmediata"
+
+    productos_activos = list(Producto.objects.filter(activo=True).select_related("stock"))
 
     detalle_criticos = []
     total_sin_stock = 0
     total_cobertura_baja = 0
 
-    for p in Producto.objects.filter(activo=True).select_related("stock"):
+    for p in productos_activos:
         try:
             stock_actual = int(p.stock.qty_on_hand) if p.stock else 0
         except Exception:
@@ -147,7 +135,13 @@ def dashboard_metrics(request):
         if stock_minimo <= 0 and cantidad_consumida <= 0:
             continue
         consumo_promedio_diario = round(cantidad_consumida / dias_periodo, 2) if dias_periodo else 0.0
-        cobertura_dias, cobertura_texto = _cobertura(stock_actual, consumo_promedio_diario)
+        if stock_actual <= 0:
+            cobertura_dias, cobertura_texto = 0, "Sin stock"
+        elif consumo_promedio_diario > 0:
+            cobertura_dias = int(round(stock_actual / consumo_promedio_diario))
+            cobertura_texto = f"{cobertura_dias} días"
+        else:
+            cobertura_dias, cobertura_texto = None, "Sin consumo en período"
         riesgo, recomendacion = _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias)
 
         es_critico = (stock_actual <= stock_minimo) or (

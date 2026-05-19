@@ -1,9 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAccessToken } from "@/contexts/AuthContext";
 import { AnalyticsCorridasSection } from "@/components/AnalyticsCorridasSection";
 import { AnalyticsDashboardSection } from "@/components/AnalyticsDashboardSection";
 import { AnalisisIntegralConsumoSection } from "@/components/AnalisisIntegralConsumoSection";
+import { DashboardPeriodFilters } from "@/components/DashboardPeriodFilters";
+import { RiskBadgeWithTooltip } from "@/components/RiskBadgeWithTooltip";
 import { apiErrorMessage } from "@/utils/apiFetch";
+import {
+  type AnalyticsPeriodPreset,
+  ANALYTICS_PERIOD_DEFAULT,
+  buildAnalyticsQueryParams,
+  clampCustomDateRange,
+  getDateRangeFromPreset,
+  initialAnalyticsDateRange,
+} from "@/utils/analyticsDateRange";
 import { formatIsoDateToDMY } from "@/utils/dateFormat";
 
 const API_DASHBOARD = "/api/dashboard/";
@@ -47,10 +57,35 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [desdeDraft, setDesdeDraft] = useState("");
-  const [hastaDraft, setHastaDraft] = useState("");
-  const [desdeFiltro, setDesdeFiltro] = useState("");
-  const [hastaFiltro, setHastaFiltro] = useState("");
+  const initialRange = initialAnalyticsDateRange();
+  const [periodPreset, setPeriodPreset] = useState<AnalyticsPeriodPreset>(ANALYTICS_PERIOD_DEFAULT);
+  const [desdeDraft, setDesdeDraft] = useState(initialRange.desde);
+  const [hastaDraft, setHastaDraft] = useState(initialRange.hasta);
+  const [desdeFiltro, setDesdeFiltro] = useState(initialRange.desde);
+  const [hastaFiltro, setHastaFiltro] = useState(initialRange.hasta);
+
+  const applyPeriodPreset = useCallback((preset: AnalyticsPeriodPreset) => {
+    setPeriodPreset(preset);
+    if (preset === "custom") {
+      const clamped = clampCustomDateRange(desdeDraft, hastaDraft);
+      setDesdeDraft(clamped.desde);
+      setHastaDraft(clamped.hasta);
+      return;
+    }
+    const range = getDateRangeFromPreset(preset);
+    setDesdeDraft(range.desde);
+    setHastaDraft(range.hasta);
+    setDesdeFiltro(range.desde);
+    setHastaFiltro(range.hasta);
+  }, [desdeDraft, hastaDraft]);
+
+  const applyCustomDateFilter = useCallback(() => {
+    const clamped = clampCustomDateRange(desdeDraft, hastaDraft);
+    setDesdeDraft(clamped.desde);
+    setHastaDraft(clamped.hasta);
+    setDesdeFiltro(clamped.desde);
+    setHastaFiltro(clamped.hasta);
+  }, [desdeDraft, hastaDraft]);
 
   const fetchDashboard = async () => {
     if (!token) {
@@ -58,10 +93,8 @@ export function DashboardPage() {
       setError("Inicie sesión para ver el dashboard.");
       return;
     }
-    const params = new URLSearchParams();
-    if (desdeFiltro) params.set("desde", desdeFiltro);
-    if (hastaFiltro) params.set("hasta", hastaFiltro);
-    const url = params.toString() ? `${API_DASHBOARD}?${params}` : API_DASHBOARD;
+    const params = buildAnalyticsQueryParams(desdeFiltro, hastaFiltro);
+    const url = `${API_DASHBOARD}?${params}`;
     try {
       setError(null);
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -103,41 +136,27 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
-      <div className="flex flex-wrap justify-between items-center gap-4">
+      <div className="flex flex-wrap justify-between items-start gap-4">
         <h2 className="text-2xl font-bold text-gray-800">Dashboard</h2>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Desde</label>
-          <input
-            type="date"
-            data-testid="dashboard-fecha-desde"
-            value={desdeDraft}
-            onChange={(e) => setDesdeDraft(e.target.value)}
-            className="rounded border border-gray-300 text-sm p-1.5"
-          />
-          <label className="text-sm text-gray-600 ml-2">Hasta</label>
-          <input
-            type="date"
-            data-testid="dashboard-fecha-hasta"
-            value={hastaDraft}
-            onChange={(e) => setHastaDraft(e.target.value)}
-            className="rounded border border-gray-300 text-sm p-1.5"
-          />
-          <button
-            type="button"
-            data-testid="dashboard-filtrar"
-            onClick={() => {
-              setDesdeFiltro(desdeDraft);
-              setHastaFiltro(hastaDraft);
-            }}
-            className="ml-2 rounded bg-blue-600 text-white text-sm px-3 py-1.5 hover:bg-blue-700"
-          >
-            Filtrar
-          </button>
-        </div>
+        <DashboardPeriodFilters
+          periodPreset={periodPreset}
+          onPeriodChange={applyPeriodPreset}
+          desdeDraft={desdeDraft}
+          hastaDraft={hastaDraft}
+          onDesdeDraftChange={(desde, hasta) => {
+            setDesdeDraft(desde);
+            setHastaDraft(hasta);
+          }}
+          onHastaDraftChange={(hasta) => {
+            const clamped = clampCustomDateRange(desdeDraft, hasta);
+            setHastaDraft(clamped.hasta);
+          }}
+          onApplyCustomDates={applyCustomDateFilter}
+        />
       </div>
 
-      <p className="text-sm text-gray-500">
-        Período: {formatIsoDateToDMY(data.filtro_desde)} — {formatIsoDateToDMY(data.filtro_hasta)}
+      <p className="text-sm text-gray-500" data-testid="dashboard-periodo-resumen">
+        Mostrando datos del {formatIsoDateToDMY(desdeFiltro)} al {formatIsoDateToDMY(hastaFiltro)}
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -167,7 +186,10 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="dashboard-stock-critico-section">
+      <div
+        className="bg-white rounded-lg shadow overflow-hidden"
+        data-testid="dashboard-stock-critico-section"
+      >
         <div className="p-4">
           {stockCriticoRows.length === 0 ? (
             <p className="text-sm text-gray-500" data-testid="dashboard-stock-critico-empty">
@@ -197,17 +219,7 @@ export function DashboardPage() {
                       <td className="px-4 py-3 text-sm text-center text-gray-900">{row.stock_minimo}</td>
                       <td className="px-4 py-3 text-sm text-center text-gray-800">{row.cobertura_texto}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border ${
-                            row.riesgo === "Alto"
-                              ? "bg-red-100 text-red-800 border-red-200"
-                              : row.riesgo === "Medio"
-                                ? "bg-amber-100 text-amber-800 border-amber-200"
-                                : "bg-emerald-100 text-emerald-800 border-emerald-200"
-                          }`}
-                        >
-                          {row.riesgo}
-                        </span>
+                        <RiskBadgeWithTooltip level={row.riesgo} />
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700">{row.recomendacion}</td>
                     </tr>

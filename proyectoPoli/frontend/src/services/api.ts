@@ -1,4 +1,6 @@
-import { apiErrorMessage } from "@/utils/apiFetch";
+﻿import { apiErrorMessage } from "@/utils/apiFetch";
+import { buildAnalyticsQueryParams, resolveAnalyticsQueryRange } from "@/utils/analyticsDateRange";
+
 const API_BASE = "/api";
 
 export interface LoginResponse {
@@ -137,8 +139,14 @@ export interface DemandaVsConsumoItem {
   consumo_promedio_diario: number;
   cobertura_dias: number | null;
   cobertura_texto: string;
+  cobertura_fuente?: "historico" | "proyeccion";
   riesgo: "Alto" | "Medio" | "Bajo";
   recomendacion: string;
+  alerta_proyeccion?: boolean;
+  consumo_proyectado_semana?: number;
+  consumo_proyectado_mes?: number;
+  consumo_proyectado_trimestre?: number;
+  cantidad_sugerida_reposicion?: number;
 }
 
 export interface DemandaVsConsumoResumen {
@@ -193,11 +201,11 @@ export interface TendenciaLinealItem {
   periodicidad: string;
   puntos_usados: number;
   pendiente: number;
-  intercepto: number;
-  r2: number | null;
-  mae: number | null;
-  rmse: number | null;
   prediccion_siguiente: number;
+  stock_actual: number;
+  stock_minimo: number;
+  cantidad_sugerida_reposicion: number;
+  criterio_reposicion: string;
   fecha_inicio: string;
   fecha_fin: string;
 }
@@ -242,11 +250,9 @@ export async function getAnalyticsResumenConsumo(
   desde?: string,
   hasta?: string,
 ): Promise<ResumenConsumoResponse> {
-  const params = new URLSearchParams();
-  if (desde) params.set("desde", desde);
-  if (hasta) params.set("hasta", hasta);
-  const q = params.toString();
-  const res = await fetch(`${API_BASE}/analytics/resumen-consumo/${q ? `?${q}` : ""}`, {
+  const range = resolveAnalyticsQueryRange(desde, hasta);
+  const q = buildAnalyticsQueryParams(range.desde, range.hasta).toString();
+  const res = await fetch(`${API_BASE}/analytics/resumen-consumo/?${q}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar resumen de consumo"));
@@ -257,12 +263,11 @@ export async function getAnalyticsTopProductosConsumidos(
   accessToken: string,
   options?: { desde?: string; hasta?: string; limit?: number },
 ): Promise<TopProductosConsumidosResponse> {
-  const params = new URLSearchParams();
-  if (options?.desde) params.set("desde", options.desde);
-  if (options?.hasta) params.set("hasta", options.hasta);
+  const range = resolveAnalyticsQueryRange(options?.desde, options?.hasta);
+  const params = buildAnalyticsQueryParams(range.desde, range.hasta);
   if (options?.limit != null) params.set("limit", String(Math.min(50, Math.max(1, options.limit))));
   const q = params.toString();
-  const res = await fetch(`${API_BASE}/analytics/top-productos-consumidos/${q ? `?${q}` : ""}`, {
+  const res = await fetch(`${API_BASE}/analytics/top-productos-consumidos/?${q}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar top productos consumidos"));
@@ -273,12 +278,11 @@ export async function getAnalyticsDemandaVsConsumo(
   accessToken: string,
   options?: { desde?: string; hasta?: string; limit?: number },
 ): Promise<DemandaVsConsumoResponse> {
-  const params = new URLSearchParams();
-  if (options?.desde) params.set("desde", options.desde);
-  if (options?.hasta) params.set("hasta", options.hasta);
+  const range = resolveAnalyticsQueryRange(options?.desde, options?.hasta);
+  const params = buildAnalyticsQueryParams(range.desde, range.hasta);
   if (options?.limit != null) params.set("limit", String(Math.min(100, Math.max(1, options.limit))));
   const q = params.toString();
-  const res = await fetch(`${API_BASE}/analytics/demanda-vs-consumo/${q ? `?${q}` : ""}`, {
+  const res = await fetch(`${API_BASE}/analytics/demanda-vs-consumo/?${q}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(await apiErrorMessage(res, "Error al cargar demanda vs consumo"));

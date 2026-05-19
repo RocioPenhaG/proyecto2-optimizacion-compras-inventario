@@ -16,8 +16,20 @@ from apps.users.models import Role
 from apps.products.models import Producto
 from apps.purchases.models import SolicitudDetalle
 from apps.inventory.models import StockProducto
-from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
-from .etl import resolver_productos_candidatos_tendencia
+from .models import (
+    HechoConsumo,
+    ResumenConsumoMensual,
+    CorridaAnalitica,
+    ProyeccionConsumoFuturo,
+    ResultadoTendenciaLineal,
+)
+from .etl import (
+    DEFAULT_PROYECCION_HORIZONTE_DIAS,
+    generar_proyecciones_consumo,
+    resolver_productos_candidatos_tendencia,
+)
+from .proyecciones import cantidad_entera
+from .date_range import parse_fechas
 from .tasks import run_etl_analitico_d1
 
 
@@ -38,21 +50,173 @@ def puede_gestionar_corridas(user):
     return user.role in (Role.GERENCIA, Role.ADMINISTRADOR)
 
 
-def parse_fechas(request):
-    desde = request.query_params.get("desde")
-    hasta = request.query_params.get("hasta")
+def _stock_actual_producto(producto) -> int:
     try:
-        if desde:
-            fecha_desde = datetime.strptime(desde, "%Y-%m-%d").date()
-        else:
-            fecha_desde = (timezone.now() - timedelta(days=365)).date()
-        if hasta:
-            fecha_hasta = datetime.strptime(hasta, "%Y-%m-%d").date()
-        else:
-            fecha_hasta = timezone.now().date()
-        return fecha_desde, fecha_hasta
-    except ValueError:
-        return None, None
+        return int(producto.stock.qty_on_hand)
+    except Exception:
+        return 0
+
+
+def calcular_reposicion_sugerida_tendencia(
+    stock_actual,
+    stock_minimo,
+    pendiente,
+    prediccion_siguiente,
+):
+    """
+    Cantidad orientativa de reposición para el listado de tendencias lineales.
+    No usa proyecciones multi-día ni ProyeccionConsumoFuturo.
+    """
+    stock_actual_int = int(stock_actual or 0)
+    stock_minimo_int = int(stock_minimo or 0)
+    pendiente_int = cantidad_entera(pendiente) or 0
+    prediccion_int = cantidad_entera(prediccion_siguiente) or 0
+
+    if stock_actual_int >= stock_minimo_int:
+        return 0, "Stock suficiente"
+
+    if pendiente_int > 0:
+        cantidad = max(0, stock_minimo_int + prediccion_int - stock_actual_int)
+        return cantidad, "Stock bajo con tendencia creciente"
+
+    cantidad = max(0, stock_minimo_int - stock_actual_int)
+    return cantidad, "Stock bajo"
+
+
+def _respuesta_fecha_invalida():
+    return Response(
+        {"detail": "Formato de fecha inválido. Use YYYY-MM-DD en desde y hasta."},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _qs_hecho_out(fecha_desde, fecha_hasta):
+    return HechoConsumo.objects.filter(
+        tipo_movimiento="OUT",
+        fecha__gte=fecha_desde,
+        fecha__lte=fecha_hasta,
+    )
+
+
+def _qs_resumen_mensual(fecha_desde, fecha_hasta):
+    return ResumenConsumoMensual.objects.filter(
+        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
+        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
+    )
+
+
+def _consumo_mensual_desde_hecho(fecha_desde, fecha_hasta, producto_id=None):
+    """
+    Consumo OUT agrupado por producto y mes calendario, respetando el rango [desde, hasta]
+    (solo días dentro del filtro, no el mes completo del resumen materializado).
+    """
+    qs = _qs_hecho_out(fecha_desde, fecha_hasta).select_related("producto")
+    if producto_id:
+        qs = qs.filter(producto_id=producto_id)
+    rows = list(
+        qs.annotate(anio=ExtractYear("fecha"), mes=ExtractMonth("fecha"))
+        .values("producto_id", "producto__sku", "producto__nombre", "anio", "mes")
+        .annotate(
+            cantidad_total=Sum("cantidad_total"),
+            dias_con_movimiento=Count("fecha", distinct=True),
+        )
+        .order_by("anio", "mes", "producto_id")
+    )
+    out = []
+    for r in rows:
+        cant = int(r["cantidad_total"] or 0)
+        dias = int(r["dias_con_movimiento"] or 0)
+        out.append(
+            {
+                "producto_id": r["producto_id"],
+                "producto_sku": r["producto__sku"],
+                "producto_nombre": r["producto__nombre"],
+                "anio": r["anio"],
+                "mes": r["mes"],
+                "cantidad_total": cant,
+                "promedio_diario": round(cant / dias, 2) if dias else 0.0,
+                "dias_con_movimiento": dias,
+            }
+        )
+    return out
+
+
+def _meta_filtro_fechas(fecha_desde, fecha_hasta):
+    return {
+        "filtro_desde": str(fecha_desde),
+        "filtro_hasta": str(fecha_hasta),
+        "filtro_historico": False,
+    }
+
+
+def _dias_periodo_analitico(fecha_desde, fecha_hasta):
+    if fecha_desde and fecha_hasta:
+        return max(1, (fecha_hasta - fecha_desde).days + 1)
+    agg = HechoConsumo.objects.filter(tipo_movimiento="OUT").aggregate(
+        mn=Min("fecha"),
+        mx=Max("fecha"),
+    )
+    if agg["mn"] and agg["mx"]:
+        return max(1, (agg["mx"] - agg["mn"]).days + 1)
+    return 1
+
+
+def _proyeccion_horizonte_corrida(corrida):
+    params = corrida.parametros if isinstance(corrida.parametros, dict) else {}
+    raw = params.get("proyeccion_horizonte_dias")
+    if raw is not None:
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_PROYECCION_HORIZONTE_DIAS
+
+
+def _mapa_acumulados_proyeccion(tendencia_ids, horizontes=(7, 14, 30)):
+    """Acumulado de consumo proyectado por tendencia en horizontes clave."""
+    if not tendencia_ids:
+        return {}
+    filas = ProyeccionConsumoFuturo.objects.filter(
+        tendencia_id__in=tendencia_ids,
+        horizonte_dias__in=horizontes,
+    ).values("tendencia_id", "horizonte_dias", "consumo_acumulado")
+    out = {}
+    for fila in filas:
+        tid = fila["tendencia_id"]
+        out.setdefault(tid, {})[fila["horizonte_dias"]] = cantidad_entera(fila["consumo_acumulado"])
+    return out
+
+
+def _serializar_proyeccion_fila(p):
+    return serializar_fila_proyeccion_diaria(
+        {
+            "fecha": p.fecha,
+            "horizonte_dias": p.horizonte_dias,
+            "valor_diario": p.valor_diario,
+            "consumo_acumulado": p.consumo_acumulado,
+        }
+    )
+
+
+def _proyecciones_para_tendencia(tendencia):
+    qs = ProyeccionConsumoFuturo.objects.filter(tendencia=tendencia).order_by("horizonte_dias")
+    if qs.exists():
+        return [_serializar_proyeccion_fila(p) for p in qs]
+    horizonte = _proyeccion_horizonte_corrida(tendencia.corrida)
+    filas = generar_proyecciones_consumo(
+        tendencia.intercepto,
+        tendencia.pendiente,
+        tendencia.puntos_usados,
+        tendencia.fecha_fin,
+        horizonte_dias=horizonte,
+    )
+    return [serializar_fila_proyeccion_diaria(p) for p in filas]
+
+
+def _resumen_proyecciones(proyecciones, fecha_fin):
+    return serializar_resumen_proyecciones_api(
+        resumen_proyecciones_completo(proyecciones, fecha_fin)
+    )
 
 
 def _serialize_corrida_resumida(c):
@@ -73,6 +237,8 @@ def _serialize_corrida_resumida(c):
         "mensaje": c.mensaje,
         "error_detalle": c.error_detalle,
         "resultados_tendencia_count": c.resultados_tendencia.count(),
+        "proyecciones_count": c.proyecciones_consumo.count(),
+        "proyeccion_horizonte_dias": _proyeccion_horizonte_corrida(c),
         "productos_candidatos_tendencia": _productos_candidatos_tendencia_para_api(c),
     }
 
@@ -89,18 +255,12 @@ def resumen_consumo(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    base = HechoConsumo.objects.filter(
-        tipo_movimiento="OUT",
-        fecha__gte=fecha_desde,
-        fecha__lte=fecha_hasta,
-    )
-    agg = base.aggregate(
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
+
+    agg = _qs_hecho_out(fecha_desde, fecha_hasta).aggregate(
         total_salidas=Sum("cantidad_total"),
         productos_distintos=Count("producto_id", distinct=True),
         dias_con_consumo=Count("fecha", distinct=True),
@@ -110,11 +270,13 @@ def resumen_consumo(request):
     dias = int(agg["dias_con_consumo"] or 0)
     promedio = round(total / dias, 2) if dias else 0.0
 
-    qs_rm = ResumenConsumoMensual.objects.filter(
-        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
-        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
+    meses_cubiertos = (
+        _qs_hecho_out(fecha_desde, fecha_hasta)
+        .annotate(anio=ExtractYear("fecha"), mes=ExtractMonth("fecha"))
+        .values("anio", "mes")
+        .distinct()
+        .count()
     )
-    meses_cubiertos = qs_rm.values("anio", "mes").distinct().count()
 
     return Response({
         "total_salidas": total,
@@ -123,8 +285,7 @@ def resumen_consumo(request):
         "promedio_diario_periodo": float(promedio),
         "filas_hecho_consumo": int(agg["filas_hecho"] or 0),
         "meses_con_resumen_mensual": meses_cubiertos,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -140,12 +301,10 @@ def top_productos_consumidos(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     try:
         limit = int(request.query_params.get("limit", 10))
     except (TypeError, ValueError):
@@ -153,11 +312,7 @@ def top_productos_consumidos(request):
     limit = max(1, min(limit, 50))
 
     rows = (
-        HechoConsumo.objects.filter(
-            tipo_movimiento="OUT",
-            fecha__gte=fecha_desde,
-            fecha__lte=fecha_hasta,
-        )
+        _qs_hecho_out(fecha_desde, fecha_hasta)
         .values("producto_id", "producto__sku", "producto__nombre")
         .annotate(cantidad_total=Sum("cantidad_total"))
         .order_by("-cantidad_total")[:limit]
@@ -173,9 +328,8 @@ def top_productos_consumidos(request):
     ]
     return Response({
         "top_productos": data,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
         "limit": limit,
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -209,39 +363,30 @@ def demanda_vs_consumo(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     try:
         limit = int(request.query_params.get("limit", 50))
     except (TypeError, ValueError):
         return Response({"detail": "Parámetro limit inválido."}, status=status.HTTP_400_BAD_REQUEST)
     limit = max(1, min(limit, 100))
 
+    sol_qs = SolicitudDetalle.objects.filter(producto_id__isnull=False)
     dt_desde = timezone.make_aware(datetime.combine(fecha_desde, time.min))
     dt_hasta = timezone.make_aware(
         datetime.strptime(fecha_hasta.strftime("%Y-%m-%d") + " 23:59:59", "%Y-%m-%d %H:%M:%S")
     )
+    sol_qs = sol_qs.filter(solicitud__creado_en__range=(dt_desde, dt_hasta))
 
     por_solicitud = {
         r["producto_id"]: int(r["cantidad_total"] or 0)
-        for r in SolicitudDetalle.objects.filter(
-            solicitud__creado_en__range=(dt_desde, dt_hasta),
-            producto_id__isnull=False,
-        )
-        .values("producto_id")
-        .annotate(cantidad_total=Sum("cantidad"))
+        for r in sol_qs.values("producto_id").annotate(cantidad_total=Sum("cantidad"))
     }
 
     consumo_rows = list(
-        HechoConsumo.objects.filter(
-            tipo_movimiento="OUT",
-            fecha__gte=fecha_desde,
-            fecha__lte=fecha_hasta,
-        )
+        _qs_hecho_out(fecha_desde, fecha_hasta)
         .values("producto_id")
         .annotate(
             cantidad_total=Sum("cantidad_total"),
@@ -273,7 +418,7 @@ def demanda_vs_consumo(request):
     all_ids = set(por_solicitud.keys()) | set(por_consumo.keys()) | set(stock_relevante_ids)
     all_ids.discard(None)
     productos_map = {p.id: p for p in Producto.objects.filter(id__in=all_ids)}
-    dias_periodo = max(1, (fecha_hasta - fecha_desde).days + 1)
+    dias_periodo = _dias_periodo_analitico(fecha_desde, fecha_hasta)
 
     def _habito_detectado(pid: int, consumo: int, dias_con_consumo: int):
         pendiente = pendiente_por_producto.get(pid)
@@ -317,7 +462,9 @@ def demanda_vs_consumo(request):
         else:
             riesgo = "Bajo"
 
-        if habito == "Sin consumo reciente":
+        if stock_actual <= 0 or cobertura_dias == 0:
+            recomendacion = "Reponer urgente"
+        elif habito == "Sin consumo reciente":
             recomendacion = "Revisar stock inmovilizado"
         elif estado == "consumo_mayor" and cobertura_dias is not None and cobertura_dias <= 7:
             recomendacion = "Revisar reposición"
@@ -330,7 +477,7 @@ def demanda_vs_consumo(request):
         elif habito in ("Bajo movimiento", "Sin consumo reciente") and stock_actual > max(stock_minimo * 2, 0):
             recomendacion = "No priorizar compra"
         else:
-            recomendacion = "Mantener control"
+            recomendacion = "Sin acción inmediata"
         return riesgo, recomendacion
 
     rows_full = []
@@ -370,26 +517,25 @@ def demanda_vs_consumo(request):
         if cobertura_dias is not None and cobertura_dias <= 7:
             n_baja_cobertura += 1
 
-        rows_full.append(
-            {
-                "producto_id": pid,
-                "sku": prod.sku if prod else "—",
-                "nombre": prod.nombre if prod else "—",
-                "cantidad_solicitada": sol,
-                "cantidad_consumida": cons,
-                "diferencia": diff,
-                "estado": estado,
-                "lectura": lectura,
-                "demanda_vs_consumo": demanda_texto,
-                "habito_detectado": habito,
-                "stock_actual": stock_actual,
-                "consumo_promedio_diario": consumo_promedio_diario,
-                "cobertura_dias": cobertura_dias,
-                "cobertura_texto": cobertura_texto,
-                "riesgo": riesgo,
-                "recomendacion": recomendacion,
-            }
-        )
+        row = {
+            "producto_id": pid,
+            "sku": prod.sku if prod else "—",
+            "nombre": prod.nombre if prod else "—",
+            "cantidad_solicitada": sol,
+            "cantidad_consumida": cons,
+            "diferencia": diff,
+            "estado": estado,
+            "lectura": lectura,
+            "demanda_vs_consumo": demanda_texto,
+            "habito_detectado": habito,
+            "stock_actual": stock_actual,
+            "consumo_promedio_diario": consumo_promedio_diario,
+            "cobertura_dias": cobertura_dias,
+            "cobertura_texto": cobertura_texto,
+            "riesgo": riesgo,
+            "recomendacion": recomendacion,
+        }
+        rows_full.append(row)
 
     riesgo_rank = {"Alto": 0, "Medio": 1, "Bajo": 2}
     rows_full.sort(
@@ -407,6 +553,7 @@ def demanda_vs_consumo(request):
             "desde": str(fecha_desde),
             "hasta": str(fecha_hasta),
             "limit": limit,
+            "filtro_historico": False,
             "resumen": {
                 "total_solicitado": total_solicitado,
                 "total_consumido": total_consumido,
@@ -449,43 +596,15 @@ def consumo_mensual(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     producto_id = request.query_params.get("producto_id")
-    qs = ResumenConsumoMensual.objects.filter(
-        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
-        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
-    ).select_related("producto")
-    if producto_id:
-        qs = qs.filter(producto_id=producto_id)
-    # Build list (anio, mes) within range for consistent ordering
-    rows = list(
-        qs.order_by("anio", "mes", "producto_id").values(
-            "producto_id", "producto__sku", "producto__nombre",
-            "anio", "mes", "cantidad_salidas", "promedio_diario", "dias_con_movimiento"
-        )
-    )
-    out = [
-        {
-            "producto_id": r["producto_id"],
-            "producto_sku": r["producto__sku"],
-            "producto_nombre": r["producto__nombre"],
-            "anio": r["anio"],
-            "mes": r["mes"],
-            "cantidad_total": r["cantidad_salidas"],
-            "promedio_diario": float(r["promedio_diario"]) if r["promedio_diario"] else 0,
-            "dias_con_movimiento": r["dias_con_movimiento"],
-        }
-        for r in rows
-    ]
+    out = _consumo_mensual_desde_hecho(fecha_desde, fecha_hasta, producto_id)
     return Response({
         "consumo_mensual": out,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -498,15 +617,13 @@ def consumo_por_dia_semana(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     producto_id = request.query_params.get("producto_id")
     qs = (
-        HechoConsumo.objects.filter(tipo_movimiento="OUT", fecha__gte=fecha_desde, fecha__lte=fecha_hasta)
+        _qs_hecho_out(fecha_desde, fecha_hasta)
         .annotate(dia_semana=ExtractWeekDay("fecha"))
         .values("producto_id", "producto__sku", "producto__nombre", "dia_semana")
         .annotate(cantidad_total=Sum("cantidad_total"), dias=Count("fecha", distinct=True))
@@ -514,8 +631,6 @@ def consumo_por_dia_semana(request):
     if producto_id:
         qs = qs.filter(producto_id=producto_id)
     rows = list(qs.order_by("producto_id", "dia_semana"))
-    # Django ExtractWeekDay: 1=Sunday, 2=Monday, ... 7=Saturday. Plan wants lunes=1; map to isoweekday (1=Mon, 7=Sun)
-    # ExtractWeekDay in Django uses Sunday=1. So 1=Dom, 2=Lun, ... 7=Sab. We can return as-is or map to isoweekday.
     out = [
         {
             "producto_id": r["producto_id"],
@@ -529,8 +644,7 @@ def consumo_por_dia_semana(request):
     ]
     return Response({
         "consumo_por_dia_semana": out,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -543,17 +657,12 @@ def indicadores(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     producto_id = request.query_params.get("producto_id")
-    qs = ResumenConsumoMensual.objects.filter(
-        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
-        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
-    ).select_related("producto")
+    qs = _qs_resumen_mensual(fecha_desde, fecha_hasta).select_related("producto")
     if producto_id:
         qs = qs.filter(producto_id=producto_id)
     agg = list(
@@ -608,8 +717,7 @@ def indicadores(request):
         })
     return Response({
         "indicadores": out,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -622,40 +730,16 @@ def habitos_resumen(request):
             {"detail": "No tiene permiso para ver analytics."},
             status=status.HTTP_403_FORBIDDEN,
         )
-    fecha_desde, fecha_hasta = parse_fechas(request)
-    if fecha_desde is None:
-        return Response(
-            {"detail": "Formato de fecha inválido. Use YYYY-MM-DD."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    try:
+        fecha_desde, fecha_hasta = parse_fechas(request)
+    except ValueError:
+        return _respuesta_fecha_invalida()
     producto_id = request.query_params.get("producto_id")
 
-    # Consumo mensual (desde ResumenConsumoMensual)
-    qs_m = ResumenConsumoMensual.objects.filter(
-        Q(anio__gt=fecha_desde.year) | Q(anio=fecha_desde.year, mes__gte=fecha_desde.month),
-        Q(anio__lt=fecha_hasta.year) | Q(anio=fecha_hasta.year, mes__lte=fecha_hasta.month),
-    ).select_related("producto")
-    if producto_id:
-        qs_m = qs_m.filter(producto_id=producto_id)
-    consumo_mensual_list = [
-        {
-            "producto_id": r["producto_id"],
-            "producto_sku": r["producto__sku"],
-            "producto_nombre": r["producto__nombre"],
-            "anio": r["anio"],
-            "mes": r["mes"],
-            "cantidad_total": r["cantidad_salidas"],
-            "promedio_diario": float(r["promedio_diario"]) if r["promedio_diario"] else 0,
-        }
-        for r in qs_m.order_by("anio", "mes", "producto_id").values(
-            "producto_id", "producto__sku", "producto__nombre",
-            "anio", "mes", "cantidad_salidas", "promedio_diario"
-        )
-    ]
+    consumo_mensual_list = _consumo_mensual_desde_hecho(fecha_desde, fecha_hasta, producto_id)
 
-    # Por día de semana
     qs_d = (
-        HechoConsumo.objects.filter(tipo_movimiento="OUT", fecha__gte=fecha_desde, fecha__lte=fecha_hasta)
+        _qs_hecho_out(fecha_desde, fecha_hasta)
         .annotate(dia_semana=ExtractWeekDay("fecha"))
         .values("producto_id", "producto__sku", "producto__nombre", "dia_semana")
         .annotate(cantidad_total=Sum("cantidad_total"))
@@ -670,8 +754,7 @@ def habitos_resumen(request):
     return Response({
         "consumo_mensual": consumo_mensual_list,
         "consumo_por_dia_semana": consumo_por_dia_semana_list,
-        "filtro_desde": str(fecha_desde),
-        "filtro_hasta": str(fecha_hasta),
+        **_meta_filtro_fechas(fecha_desde, fecha_hasta),
     })
 
 
@@ -790,31 +873,49 @@ def tendencias_por_corrida(request, corrida_id):
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    resultados = (
+    resultados = list(
         ResultadoTendenciaLineal.objects.filter(corrida=corrida)
-        .select_related("producto")
-        .order_by("producto__sku", "producto__nombre", "id")
+        .select_related("producto", "producto__stock")
+        .order_by("-prediccion_siguiente", "producto__nombre", "id")
     )
-    data = [
+    data = []
+    for r in resultados:
+        stock_actual = _stock_actual_producto(r.producto)
+        stock_minimo = int(r.producto.stock_minimo or 0)
+        pendiente_int = cantidad_entera(r.pendiente)
+        prediccion_int = cantidad_entera(r.prediccion_siguiente)
+        cantidad_sugerida, criterio = calcular_reposicion_sugerida_tendencia(
+            stock_actual,
+            stock_minimo,
+            pendiente_int,
+            prediccion_int,
+        )
+        data.append(
+            {
+                "id": r.id,
+                "producto_id": r.producto_id,
+                "producto_nombre": r.producto.nombre,
+                "producto_sku": r.producto.sku,
+                "periodicidad": r.periodicidad,
+                "puntos_usados": int(r.puntos_usados),
+                "pendiente": pendiente_int,
+                "prediccion_siguiente": prediccion_int,
+                "stock_actual": stock_actual,
+                "stock_minimo": stock_minimo,
+                "cantidad_sugerida_reposicion": cantidad_sugerida,
+                "criterio_reposicion": criterio,
+                "fecha_inicio": r.fecha_inicio,
+                "fecha_fin": r.fecha_fin,
+            }
+        )
+    return Response(
         {
-            "id": r.id,
-            "producto_id": r.producto_id,
-            "producto_nombre": r.producto.nombre,
-            "producto_sku": r.producto.sku,
-            "periodicidad": r.periodicidad,
-            "puntos_usados": r.puntos_usados,
-            "pendiente": float(r.pendiente),
-            "intercepto": float(r.intercepto),
-            "r2": float(r.r2) if r.r2 is not None else None,
-            "mae": float(r.mae) if r.mae is not None else None,
-            "rmse": float(r.rmse) if r.rmse is not None else None,
-            "prediccion_siguiente": float(r.prediccion_siguiente),
-            "fecha_inicio": r.fecha_inicio,
-            "fecha_fin": r.fecha_fin,
+            "corrida_id": corrida.id,
+            "task_id": corrida.task_id,
+            "count": len(data),
+            "results": data,
         }
-        for r in resultados
-    ]
-    return Response({"corrida_id": corrida.id, "task_id": corrida.task_id, "count": len(data), "results": data})
+    )
 
 
 @api_view(["GET"])
@@ -856,10 +957,8 @@ def detalle_visual_tendencia(request, tendencia_id):
         for idx, row in enumerate(historico_rows)
     ]
 
-    if tendencia.periodicidad == "DAILY":
-        fecha_prediccion = tendencia.fecha_fin + timedelta(days=1)
-    else:
-        fecha_prediccion = tendencia.fecha_fin + timedelta(days=1)
+    fecha_prediccion = tendencia.fecha_fin + timedelta(days=1)
+    valor_prediccion = float(tendencia.prediccion_siguiente)
 
     data = {
         "id": tendencia.id,
@@ -872,7 +971,7 @@ def detalle_visual_tendencia(request, tendencia_id):
         "tendencia": tendencia_estimacion,
         "prediccion": {
             "fecha": fecha_prediccion,
-            "valor": float(tendencia.prediccion_siguiente),
+            "valor": cantidad_entera(valor_prediccion),
         },
     }
     if len(historico) < 2:

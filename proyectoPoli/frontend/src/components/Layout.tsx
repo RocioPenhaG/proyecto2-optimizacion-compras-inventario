@@ -41,13 +41,15 @@ export function Layout() {
                 Solicitudes
               </NavLink>
               {(user?.role === "COMPRAS" || user?.role === "GERENCIA" || user?.role === "CONTABLE" || user?.role === "ADMINISTRADOR") && (
-                <NavLink
-                  to="/dashboard"
-                  data-testid="nav-dashboard"
-                  className={({ isActive }) => `text-sm font-medium ${isActive ? 'text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
-                >
-                  Dashboard
-                </NavLink>
+                <>
+                  <NavLink
+                    to="/dashboard"
+                    data-testid="nav-dashboard"
+                    className={({ isActive }) => `text-sm font-medium ${isActive ? 'text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                  >
+                    Dashboard
+                  </NavLink>
+                </>
               )}
             </nav>
           </div>

@@ -1,4 +1,4 @@
-"""Tests para el módulo analytics (ETL, resumen mensual, API hábitos)."""
+﻿"""Tests para el mÃ³dulo analytics (ETL, resumen mensual, API hÃ¡bitos)."""
 from datetime import date, datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from unittest.mock import patch
@@ -13,9 +13,47 @@ from apps.inventory.models import MovStock, StockProducto
 from apps.users.models import User, Role
 from apps.purchases.models import SolicitudDetalle, SolicitudInsumo
 
-from .models import HechoConsumo, ResumenConsumoMensual, CorridaAnalitica, ResultadoTendenciaLineal
-from .etl import ejecutar_etl_analitico, actualizar_resumen_consumo_mensual, _fecha_mov_local
+from .models import (
+    HechoConsumo,
+    ResumenConsumoMensual,
+    CorridaAnalitica,
+    ProyeccionConsumoFuturo,
+    ResultadoTendenciaLineal,
+)
+from .etl import (
+    ejecutar_etl_analitico,
+    actualizar_resumen_consumo_mensual,
+    generar_proyecciones_consumo,
+    guardar_proyecciones_consumo_futuro,
+    _fecha_mov_local,
+)
+from types import SimpleNamespace
+
+from .proyecciones import (
+    ALERTA_DATOS_INSUFICIENTES,
+    ALERTA_PROYECCION_AJUSTADA,
+    ALERTA_STOCK_INSUFICIENTE,
+    CONFIABILIDAD_ALTA,
+    CONFIABILIDAD_BAJA,
+    CONFIABILIDAD_DATOS_INSUFICIENTES,
+    CONFIABILIDAD_MEDIA,
+    CONFIABILIDAD_TENDENCIA_INESTABLE,
+    ajustar_consumo_mensual,
+    calcular_campos_vista_operativa,
+    cantidad_entera,
+    construir_reporte_proyecciones_futuras,
+    evaluar_accion_sugerida,
+    evaluar_cobertura_estimada_texto,
+    evaluar_confiabilidad,
+    evaluar_estado_operativo,
+    mapa_proyecciones_operativas,
+    reposicion_orientativa,
+    resumen_proyecciones_completo,
+    serializar_resumen_proyecciones_api,
+)
 from .tasks import run_etl_analitico_d1
+from .views import calcular_reposicion_sugerida_tendencia
+from .services.retencion import limpiar_datos_analiticos
 
 
 class ETLTestCase(TestCase):
@@ -49,7 +87,7 @@ class ETLTestCase(TestCase):
         self.assertEqual(HechoConsumo.objects.get(producto=self.p, tipo_movimiento="OUT").cantidad_total, 10)
 
     def test_actualizar_resumen_consumo_mensual(self):
-        # Fechas fijas en el mismo mes: con date.today() el día 1 del mes fallaba
+        # Fechas fijas en el mismo mes: con date.today() el dÃ­a 1 del mes fallaba
         # (ayer cae en el mes anterior y el resumen mensual solo sumaba un hecho).
         ref = date(2026, 6, 15)
         HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=30)
@@ -65,13 +103,13 @@ class ETLTestCase(TestCase):
         """
         Valida:
         - cantidad_salidas mensual
-        - dias_con_movimiento (solo días con OUT)
+        - dias_con_movimiento (solo dÃ­as con OUT)
         - promedio_diario = cantidad_salidas / dias_con_movimiento
         - redondeo a 2 decimales
-        - exclusión de movimientos IN
+        - exclusiÃ³n de movimientos IN
         """
         ref = date(2026, 6, 20)
-        # OUT en 3 días diferentes del mismo mes.
+        # OUT en 3 dÃ­as diferentes del mismo mes.
         HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=10)
         HechoConsumo.objects.create(
             producto=self.p, fecha=ref - timedelta(days=1), tipo_movimiento="OUT", cantidad_total=10
@@ -91,9 +129,9 @@ class ETLTestCase(TestCase):
         self.assertEqual(r.promedio_diario, Decimal(str(round(31 / 3, 2))))
 
     def test_resumen_mensual_promedio_diario_redondeo_dos_decimales(self):
-        """Valida redondeo esperado cuando el promedio es periódico (10/6 = 1.666...)."""
+        """Valida redondeo esperado cuando el promedio es periÃ³dico (10/6 = 1.666...)."""
         ref = date(2026, 7, 10)
-        cantidades = [1, 1, 2, 2, 2, 2]  # total=10 en 6 días
+        cantidades = [1, 1, 2, 2, 2, 2]  # total=10 en 6 dÃ­as
         for idx, cantidad in enumerate(cantidades):
             HechoConsumo.objects.create(
                 producto=self.p,
@@ -125,6 +163,99 @@ class ETLTestCase(TestCase):
         self.assertIsNotNone(resultado.pendiente)
         self.assertIsNotNone(resultado.intercepto)
         self.assertIsNotNone(resultado.prediccion_siguiente)
+        self.assertEqual(
+            ProyeccionConsumoFuturo.objects.filter(tendencia=resultado).count(),
+            30,
+        )
+        p1 = ProyeccionConsumoFuturo.objects.get(tendencia=resultado, horizonte_dias=1)
+        self.assertAlmostEqual(float(p1.valor_diario), float(resultado.prediccion_siguiente), places=4)
+
+    def test_proyecciones_truncan_valores_negativos(self):
+        filas = generar_proyecciones_consumo(
+            intercepto=5,
+            pendiente=-10,
+            puntos_usados=3,
+            fecha_fin=date(2026, 5, 1),
+            horizonte_dias=3,
+        )
+        self.assertEqual(len(filas), 3)
+        self.assertEqual(filas[0]["valor_diario"], 0.0)
+
+    def test_resumen_proyecciones_periodos_calendario(self):
+        fecha_fin = date(2026, 4, 25)  # sÃ¡bado
+        filas = generar_proyecciones_consumo(
+            intercepto=10,
+            pendiente=1,
+            puntos_usados=2,
+            fecha_fin=fecha_fin,
+            horizonte_dias=35,
+        )
+        resumen = resumen_proyecciones_completo(filas, fecha_fin)
+        self.assertIsNotNone(resumen["consumo_proyectado_semana"])
+        self.assertIsNotNone(resumen["consumo_proyectado_mes"])
+        self.assertIsNotNone(resumen["consumo_proyectado_trimestre"])
+        self.assertEqual(resumen["periodo_semana_desde"], date(2026, 4, 27))
+        self.assertEqual(resumen["periodo_mes_desde"], date(2026, 5, 1))
+
+    def test_serializar_resumen_proyecciones_enteros(self):
+        resumen = serializar_resumen_proyecciones_api(
+            {
+                "consumo_proyectado_7d": 10.6,
+                "consumo_proyectado_semana": 25.4,
+                "consumo_proyectado_mes": None,
+            }
+        )
+        self.assertEqual(resumen["consumo_proyectado_7d"], 11)
+        self.assertEqual(resumen["consumo_proyectado_semana"], 25)
+        self.assertIsNone(resumen["consumo_proyectado_mes"])
+        self.assertEqual(cantidad_entera(18.7), 19)
+
+    def test_evaluar_confiabilidad_r2(self):
+        class T:
+            def __init__(self, puntos, r2):
+                self.puntos_usados = puntos
+                self.r2 = r2
+
+        self.assertEqual(evaluar_confiabilidad(T(10, Decimal("0.10")), 100, 50), CONFIABILIDAD_BAJA)
+        self.assertEqual(evaluar_confiabilidad(T(10, Decimal("0.45")), 100, 50), CONFIABILIDAD_MEDIA)
+        self.assertEqual(evaluar_confiabilidad(T(10, Decimal("0.85")), 100, 50), CONFIABILIDAD_ALTA)
+
+    def test_ajustar_consumo_mensual_limite(self):
+        orig, adj, flag = ajustar_consumo_mensual(1000, 100)
+        self.assertEqual(orig, 1000)
+        self.assertEqual(adj, 300)
+        self.assertTrue(flag)
+
+    def test_reposicion_orientativa_sin_datos(self):
+        self.assertIsNone(reposicion_orientativa(5, 500, 10))
+
+    def test_mapa_proyecciones_operativas(self):
+        producto = Producto.objects.create(sku="MAP-001", nombre="Map", stock_minimo=0)
+        corrida = CorridaAnalitica.objects.create(
+            task_id="map-proy",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        ResultadoTendenciaLineal.objects.create(
+            corrida=corrida,
+            producto=producto,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 4, 20),
+            fecha_fin=date(2026, 4, 22),
+            puntos_usados=3,
+            pendiente=Decimal("2.000000"),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("1.000000"),
+            mae=Decimal("0.000000"),
+            rmse=Decimal("0.000000"),
+            prediccion_siguiente=Decimal("16.000000"),
+            metadata={},
+        )
+        guardar_proyecciones_consumo_futuro(corrida, horizonte_dias=14)
+        m = mapa_proyecciones_operativas({producto.id})
+        self.assertIn(producto.id, m)
+        self.assertGreater(m[producto.id]["consumo_promedio_diario_proyectado"], 0)
 
     def test_tendencia_lineal_no_se_crea_con_menos_de_tres_puntos(self):
         ref = timezone.now()
@@ -208,11 +339,11 @@ class ETLTestCase(TestCase):
     @override_settings(TIME_ZONE="America/Argentina/Buenos_Aires", USE_TZ=True)
     def test_etl_hecho_fecha_local_sin_desfase_por_utc(self):
         """
-        Movimiento en UTC que cae en calendario local 2026-04-28 (ART) debe agruparse en ese día,
+        Movimiento en UTC que cae en calendario local 2026-04-28 (ART) debe agruparse en ese dÃ­a,
         no en 2026-04-29 (evita borrado parcial + insert duplicado en segunda corrida).
         """
         timezone.activate("America/Argentina/Buenos_Aires")
-        # 2026-04-29 02:00 UTC == 2026-04-28 23:00 ART → día local 28.
+        # 2026-04-29 02:00 UTC == 2026-04-28 23:00 ART â†’ dÃ­a local 28.
         dt_utc = timezone.make_aware(datetime(2026, 4, 29, 2, 0, 0), datetime_timezone.utc)
         self._crear_mov_stock_con_fecha(self.p, "OUT", 5, dt_utc)
         ejecutar_etl_analitico(fecha_desde=date(2026, 4, 28), fecha_hasta=date(2026, 4, 28))
@@ -228,7 +359,7 @@ class ETLTestCase(TestCase):
 
     @override_settings(TIME_ZONE="America/Argentina/Buenos_Aires", USE_TZ=True)
     def test_fecha_mov_local_coherente_con_trunc(self):
-        """_fecha_mov_local alinea con el criterio de día local del ETL."""
+        """_fecha_mov_local alinea con el criterio de dÃ­a local del ETL."""
         timezone.activate("America/Argentina/Buenos_Aires")
         dt_utc = timezone.make_aware(datetime(2026, 4, 29, 2, 0, 0), datetime_timezone.utc)
         self.assertEqual(_fecha_mov_local(dt_utc), date(2026, 4, 28))
@@ -251,8 +382,80 @@ class AnalyticsAPITestCase(TestCase):
         self.assertIn("consumo_mensual", resp.json())
         self.assertIn("filtro_desde", resp.json())
 
+    def test_consumo_mensual_respeta_rango_fechas_no_mes_completo(self):
+        ref = timezone.localdate() - timedelta(days=2)
+        HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=100)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=ref - timedelta(days=5), tipo_movimiento="OUT", cantidad_total=50
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/consumo-mensual/",
+            {"desde": (ref - timedelta(days=1)).isoformat(), "hasta": ref.isoformat()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.json()["consumo_mensual"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cantidad_total"], 100)
+        self.assertEqual(rows[0]["mes"], ref.month)
+
+    def test_habitos_resumen_consumo_mensual_respeta_filtro(self):
+        ref = timezone.localdate() - timedelta(days=1)
+        HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=30)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=ref - timedelta(days=20), tipo_movimiento="OUT", cantidad_total=70
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/habitos-resumen/",
+            {"desde": (ref - timedelta(days=5)).isoformat(), "hasta": ref.isoformat()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        rows = resp.json()["consumo_mensual"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["cantidad_total"], 30)
+
+    def test_resumen_consumo_default_sin_params_ultimos_30_dias(self):
+        today = timezone.localdate()
+        ref_in = today - timedelta(days=5)
+        ref_out = today - timedelta(days=40)
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=ref_in, tipo_movimiento="OUT", cantidad_total=100
+        )
+        HechoConsumo.objects.create(
+            producto=self.p, fecha=ref_out, tipo_movimiento="OUT", cantidad_total=40
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/analytics/resumen-consumo/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body.get("filtro_historico"))
+        self.assertEqual(body["total_salidas"], 100)
+
+    def test_resumen_consumo_solo_desde_calcula_hasta_30_dias(self):
+        desde = timezone.localdate() - timedelta(days=10)
+        esperado_hasta = min(desde + timedelta(days=30), timezone.localdate())
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/analytics/resumen-consumo/", {"desde": desde.isoformat()})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["filtro_desde"], desde.isoformat())
+        self.assertEqual(body["filtro_hasta"], esperado_hasta.isoformat())
+
+    def test_resumen_consumo_acota_rango_mayor_90_dias(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/resumen-consumo/",
+            {"desde": "2026-01-01", "hasta": "2026-12-31"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        desde = date.fromisoformat(body["filtro_desde"])
+        hasta = date.fromisoformat(body["filtro_hasta"])
+        self.assertLessEqual((hasta - desde).days, 90)
+
     def test_resumen_consumo_desde_hecho(self):
-        ref = date(2026, 8, 10)
+        ref = timezone.localdate() - timedelta(days=1)
         HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=100)
         HechoConsumo.objects.create(
             producto=self.p, fecha=ref - timedelta(days=1), tipo_movimiento="OUT", cantidad_total=50
@@ -260,7 +463,7 @@ class AnalyticsAPITestCase(TestCase):
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             "/api/analytics/resumen-consumo/",
-            {"desde": "2026-08-01", "hasta": "2026-08-31"},
+            {"desde": (ref - timedelta(days=1)).isoformat(), "hasta": ref.isoformat()},
         )
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -270,13 +473,17 @@ class AnalyticsAPITestCase(TestCase):
 
     def test_top_productos_consumidos(self):
         p2 = Producto.objects.create(sku="TST-003", nombre="Otro", stock_minimo=0)
-        ref = date(2026, 9, 5)
+        ref = timezone.localdate() - timedelta(days=1)
         HechoConsumo.objects.create(producto=self.p, fecha=ref, tipo_movimiento="OUT", cantidad_total=10)
         HechoConsumo.objects.create(producto=p2, fecha=ref, tipo_movimiento="OUT", cantidad_total=99)
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             "/api/analytics/top-productos-consumidos/",
-            {"desde": "2026-09-01", "hasta": "2026-09-30", "limit": 5},
+            {
+                "desde": (ref - timedelta(days=7)).isoformat(),
+                "hasta": ref.isoformat(),
+                "limit": 5,
+            },
         )
         self.assertEqual(resp.status_code, 200)
         top = resp.json()["top_productos"]
@@ -292,9 +499,9 @@ class AnalyticsAPITestCase(TestCase):
         p_alto = Producto.objects.create(sku="DVC-A", nombre="Alcohol Gel", stock_minimo=0)
         p_bajo = Producto.objects.create(sku="DVC-B", nombre="Mascarillas", stock_minimo=0)
         p_ok = Producto.objects.create(sku="DVC-C", nombre="Guantes", stock_minimo=0)
-        ref = date(2026, 10, 15)
+        ref = timezone.localdate() - timedelta(days=2)
         sol = SolicitudInsumo.objects.create(solicitante=self.user, destino="X")
-        sol.creado_en = timezone.make_aware(datetime(2026, 10, 10, 12, 0, 0))
+        sol.creado_en = timezone.make_aware(datetime.combine(ref - timedelta(days=5), datetime.min.time()))
         sol.save(update_fields=["creado_en"])
         SolicitudDetalle.objects.create(solicitud=sol, producto=p_alto, cantidad=160)
         SolicitudDetalle.objects.create(solicitud=sol, producto=p_bajo, cantidad=100)
@@ -311,14 +518,16 @@ class AnalyticsAPITestCase(TestCase):
         )
 
         self.client.force_authenticate(user=self.user)
+        desde = (ref - timedelta(days=7)).isoformat()
+        hasta = ref.isoformat()
         resp = self.client.get(
             "/api/analytics/demanda-vs-consumo/",
-            {"desde": "2026-10-01", "hasta": "2026-10-31", "limit": 20},
+            {"desde": desde, "hasta": hasta, "limit": 20},
         )
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["desde"], "2026-10-01")
-        self.assertEqual(body["hasta"], "2026-10-31")
+        self.assertEqual(body["desde"], desde)
+        self.assertEqual(body["hasta"], hasta)
         self.assertEqual(body["resumen"]["total_solicitado"], 350)
         self.assertEqual(body["resumen"]["total_consumido"], 343)
         self.assertEqual(body["resumen"]["mayor_solicitud_que_consumo"], 1)
@@ -346,9 +555,14 @@ class AnalyticsAPITestCase(TestCase):
         p_stock = Producto.objects.create(sku="DVC-STOCK", nombre="Con stock", stock_minimo=2)
         StockProducto.objects.create(producto=p_stock, qty_on_hand=9)
         self.client.force_authenticate(user=self.user)
+        ref = timezone.localdate()
         resp = self.client.get(
             "/api/analytics/demanda-vs-consumo/",
-            {"desde": "2026-10-01", "hasta": "2026-10-31", "limit": 50},
+            {
+                "desde": (ref - timedelta(days=7)).isoformat(),
+                "hasta": ref.isoformat(),
+                "limit": 50,
+            },
         )
         self.assertEqual(resp.status_code, 200)
         by_sku = {r["sku"]: r for r in resp.json()["resultados"]}
@@ -357,12 +571,12 @@ class AnalyticsAPITestCase(TestCase):
 
     def test_demanda_vs_consumo_solo_consumo(self):
         p = Producto.objects.create(sku="DVC-ONLY-C", nombre="Solo Consumo", stock_minimo=0)
-        ref = date(2026, 11, 1)
+        ref = timezone.localdate() - timedelta(days=1)
         HechoConsumo.objects.create(producto=p, fecha=ref, tipo_movimiento="OUT", cantidad_total=42)
         self.client.force_authenticate(user=self.user)
         resp = self.client.get(
             "/api/analytics/demanda-vs-consumo/",
-            {"desde": "2026-11-01", "hasta": "2026-11-30"},
+            {"desde": (ref - timedelta(days=7)).isoformat(), "hasta": ref.isoformat()},
         )
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -371,6 +585,27 @@ class AnalyticsAPITestCase(TestCase):
         self.assertEqual(r0["cantidad_solicitada"], 0)
         self.assertEqual(r0["cantidad_consumida"], 42)
         self.assertEqual(r0["estado"], "consumo_mayor")
+
+    def test_demanda_vs_consumo_cobertura_historica(self):
+        p = Producto.objects.create(sku="DVC-COB", nombre="Cobertura hist", stock_minimo=5)
+        StockProducto.objects.create(producto=p, qty_on_hand=14)
+        ref = timezone.localdate() - timedelta(days=1)
+        for i in range(7):
+            HechoConsumo.objects.create(
+                producto=p,
+                fecha=ref - timedelta(days=i),
+                tipo_movimiento="OUT",
+                cantidad_total=2,
+            )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": (ref - timedelta(days=6)).isoformat(), "hasta": ref.isoformat()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        row = next(r for r in resp.json()["resultados"] if r["sku"] == "DVC-COB")
+        self.assertIn("dÃ­as", row["cobertura_texto"])
+        self.assertNotIn("consumo_proyectado_semana", row)
 
     def test_ultima_corrida(self):
         CorridaAnalitica.objects.create(
@@ -471,7 +706,7 @@ class AnalyticsCorridaETLTestCase(TestCase):
         self.assertEqual(self.client.get("/api/analytics/etl/corridas/").status_code, 200)
 
     def test_tendencias_corrida_permite_compras(self):
-        """Listado de tendencias usa puede_ver_analytics (Compras sí)."""
+        """Listado de tendencias usa puede_ver_analytics (Compras sÃ­)."""
         corrida = CorridaAnalitica.objects.create(
             task_id="tend-test",
             estado=CorridaAnalitica.Estado.SUCCESS,
@@ -493,6 +728,66 @@ class AnalyticsCorridaETLTestCase(TestCase):
             self.client.get(f"/api/analytics/etl/corridas/{corrida.id}/tendencias/").status_code,
             403,
         )
+
+    def _tendencia_corrida_producto(self, sku, stock_qty, stock_minimo, pendiente, prediccion):
+        producto = Producto.objects.create(sku=sku, nombre=f"Prod {sku}", stock_minimo=stock_minimo)
+        StockProducto.objects.create(producto=producto, qty_on_hand=stock_qty)
+        corrida = CorridaAnalitica.objects.create(
+            task_id=f"tend-rep-{sku}",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+        )
+        tendencia = ResultadoTendenciaLineal.objects.create(
+            corrida=corrida,
+            producto=producto,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 5, 1),
+            fecha_fin=date(2026, 5, 10),
+            puntos_usados=5,
+            pendiente=Decimal(str(pendiente)),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("0.900000"),
+            mae=Decimal("1.000000"),
+            rmse=Decimal("1.200000"),
+            prediccion_siguiente=Decimal(str(prediccion)),
+            metadata={},
+        )
+        return corrida, tendencia
+
+    def test_reposicion_sugerida_stock_bajo_tendencia_creciente(self):
+        cantidad, criterio = calcular_reposicion_sugerida_tendencia(20, 30, 2, 5)
+        self.assertEqual(cantidad, 15)
+        self.assertEqual(criterio, "Stock bajo con tendencia creciente")
+
+    def test_reposicion_sugerida_stock_bajo_sin_crecimiento(self):
+        cantidad, criterio = calcular_reposicion_sugerida_tendencia(20, 30, 0, 5)
+        self.assertEqual(cantidad, 10)
+        self.assertEqual(criterio, "Stock bajo")
+
+        cantidad_neg, criterio_neg = calcular_reposicion_sugerida_tendencia(20, 30, -1, 5)
+        self.assertEqual(cantidad_neg, 10)
+        self.assertEqual(criterio_neg, "Stock bajo")
+
+    def test_reposicion_sugerida_stock_suficiente(self):
+        cantidad, criterio = calcular_reposicion_sugerida_tendencia(35, 30, 2, 5)
+        self.assertEqual(cantidad, 0)
+        self.assertEqual(criterio, "Stock suficiente")
+
+    def test_tendencias_api_incluye_reposicion_sugerida(self):
+        corrida, _ = self._tendencia_corrida_producto(
+            "REP-A", stock_qty=20, stock_minimo=30, pendiente=2, prediccion=5
+        )
+        self.client.force_authenticate(user=self.compras)
+        resp = self.client.get(f"/api/analytics/etl/corridas/{corrida.id}/tendencias/")
+        self.assertEqual(resp.status_code, 200)
+        fila = resp.json()["results"][0]
+        self.assertEqual(fila["stock_actual"], 20)
+        self.assertEqual(fila["stock_minimo"], 30)
+        self.assertEqual(fila["cantidad_sugerida_reposicion"], 15)
+        self.assertEqual(fila["criterio_reposicion"], "Stock bajo con tendencia creciente")
+        self.assertEqual(fila["pendiente"], 2)
+        self.assertEqual(fila["prediccion_siguiente"], 5)
 
     def test_detalle_visual_tendencia_ok(self):
         producto = Producto.objects.create(sku="DET-001", nombre="Det", stock_minimo=0)
@@ -538,7 +833,9 @@ class AnalyticsCorridaETLTestCase(TestCase):
         self.assertEqual(len(body["historico"]), 2)
         self.assertEqual(len(body["tendencia"]), 2)
         self.assertEqual(body["prediccion"]["fecha"], "2026-04-26")
-        self.assertEqual(body["prediccion"]["valor"], 18.0)
+        self.assertEqual(body["prediccion"]["valor"], 18)
+        self.assertNotIn("proyecciones", body)
+        self.assertNotIn("resumen_proyecciones", body)
 
     def test_detalle_visual_tendencia_funcionario_403(self):
         corrida = CorridaAnalitica.objects.create(
@@ -572,3 +869,129 @@ class AnalyticsCorridaETLTestCase(TestCase):
         admin = User.objects.create_superuser(username="admin_etl", email="a@a.com", password="x")
         self.client.force_authenticate(user=admin)
         self.assertEqual(self.client.post("/api/analytics/etl/run-d1/").status_code, 202)
+
+
+class RetencionDatosAnaliticosTestCase(TestCase):
+    """Retención de corridas/tendencias analíticas sin tocar agregados operativos."""
+
+    def setUp(self):
+        self.producto = Producto.objects.create(sku="RET-001", nombre="Retención", stock_minimo=0)
+
+    def _corrida_antigua(self, suffix="old"):
+        return CorridaAnalitica.objects.create(
+            task_id=f"ret-{suffix}",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            fecha_ejecucion=timezone.now() - timedelta(days=200),
+        )
+
+    def _corrida_reciente(self, suffix="new"):
+        return CorridaAnalitica.objects.create(
+            task_id=f"ret-{suffix}",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            fecha_ejecucion=timezone.now() - timedelta(days=10),
+        )
+
+    def _tendencia(self, corrida):
+        return ResultadoTendenciaLineal.objects.create(
+            corrida=corrida,
+            producto=self.producto,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 1, 1),
+            fecha_fin=date(2026, 1, 10),
+            puntos_usados=5,
+            pendiente=Decimal("1.000000"),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("0.900000"),
+            mae=Decimal("1.000000"),
+            rmse=Decimal("1.200000"),
+            prediccion_siguiente=Decimal("12.000000"),
+            metadata={},
+        )
+
+    def test_dry_run_no_elimina_registros(self):
+        corrida = self._corrida_antigua()
+        self._tendencia(corrida)
+        resultado = limpiar_datos_analiticos(dias_retencion=180, dry_run=True)
+        self.assertTrue(resultado.dry_run)
+        self.assertEqual(resultado.corridas_antiguas, 1)
+        self.assertEqual(resultado.tendencias_asociadas, 1)
+        self.assertEqual(CorridaAnalitica.objects.count(), 1)
+        self.assertEqual(ResultadoTendenciaLineal.objects.count(), 1)
+
+    def test_elimina_proyecciones_asociadas_a_corrida_antigua(self):
+        corrida = self._corrida_antigua("proy")
+        self._tendencia(corrida)
+        guardar_proyecciones_consumo_futuro(corrida, horizonte_dias=5)
+        self.assertGreater(ProyeccionConsumoFuturo.objects.filter(corrida=corrida).count(), 0)
+
+        resultado = limpiar_datos_analiticos(dias_retencion=180, dry_run=False)
+        self.assertGreater(resultado.eliminadas_proyecciones, 0)
+        self.assertEqual(ProyeccionConsumoFuturo.objects.filter(corrida_id=corrida.id).count(), 0)
+
+    def test_elimina_corridas_antiguas_y_tendencias(self):
+        corrida_vieja = self._corrida_antigua()
+        tendencia_vieja = self._tendencia(corrida_vieja)
+        corrida_nueva = self._corrida_reciente()
+        tendencia_nueva = self._tendencia(corrida_nueva)
+
+        resultado = limpiar_datos_analiticos(dias_retencion=180, dry_run=False)
+        self.assertFalse(resultado.dry_run)
+        self.assertEqual(resultado.eliminadas_corridas, 1)
+        self.assertGreaterEqual(resultado.eliminadas_tendencias, 1)
+
+        self.assertFalse(CorridaAnalitica.objects.filter(id=corrida_vieja.id).exists())
+        self.assertFalse(ResultadoTendenciaLineal.objects.filter(id=tendencia_vieja.id).exists())
+        self.assertTrue(CorridaAnalitica.objects.filter(id=corrida_nueva.id).exists())
+        self.assertTrue(ResultadoTendenciaLineal.objects.filter(id=tendencia_nueva.id).exists())
+
+    def test_conserva_hecho_consumo_y_resumen_mensual(self):
+        corrida = self._corrida_antigua()
+        self._tendencia(corrida)
+        HechoConsumo.objects.create(
+            producto=self.producto,
+            fecha=date(2026, 2, 1),
+            tipo_movimiento="OUT",
+            cantidad_total=7,
+        )
+        ResumenConsumoMensual.objects.create(
+            producto=self.producto,
+            anio=2026,
+            mes=2,
+            cantidad_salidas=7,
+            promedio_diario=Decimal("7.00"),
+            dias_con_movimiento=1,
+        )
+
+        limpiar_datos_analiticos(dias_retencion=180, dry_run=False)
+
+        self.assertEqual(HechoConsumo.objects.count(), 1)
+        self.assertEqual(ResumenConsumoMensual.objects.count(), 1)
+
+    def test_acepta_dias_retencion_personalizado(self):
+        corrida = CorridaAnalitica.objects.create(
+            task_id="ret-custom",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            fecha_ejecucion=timezone.now() - timedelta(days=400),
+        )
+        self._tendencia(corrida)
+
+        limpiar_datos_analiticos(dias_retencion=365, dry_run=False)
+        self.assertFalse(CorridaAnalitica.objects.filter(id=corrida.id).exists())
+
+        corrida_reciente = self._corrida_reciente("custom-ok")
+        limpiar_datos_analiticos(dias_retencion=365, dry_run=False)
+        self.assertTrue(CorridaAnalitica.objects.filter(id=corrida_reciente.id).exists())
+
+    def test_management_command_dry_run(self):
+        from django.core.management import call_command
+        from io import StringIO
+
+        self._tendencia(self._corrida_antigua())
+        out = StringIO()
+        call_command("limpiar_datos_analiticos", "--dry-run", stdout=out)
+        self.assertIn("Modo simulación", out.getvalue())
+        self.assertEqual(CorridaAnalitica.objects.count(), 1)

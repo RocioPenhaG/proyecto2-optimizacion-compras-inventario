@@ -10,8 +10,10 @@ import {
   BarController,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import { buildAnalyticsQueryParams, enumerateMonthsInRange } from "@/utils/analyticsDateRange";
 import { formatIsoDateToDMY } from "@/utils/dateFormat";
 import { getAnalyticsDemandaVsConsumo, type DemandaVsConsumoResponse } from "@/services/api";
+import { RiskBadgeWithTooltip } from "@/components/RiskBadgeWithTooltip";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, BarController);
 
@@ -41,8 +43,9 @@ interface ConsumoPorDiaItem {
 interface HabitosData {
   consumo_mensual: ConsumoMensualItem[];
   consumo_por_dia_semana: ConsumoPorDiaItem[];
-  filtro_desde: string;
-  filtro_hasta: string;
+  filtro_desde: string | null;
+  filtro_hasta: string | null;
+  filtro_historico?: boolean;
 }
 
 interface Props {
@@ -50,12 +53,6 @@ interface Props {
   desde: string;
   hasta: string;
 }
-
-const RIESGO_BADGE: Record<string, string> = {
-  Alto: "bg-red-100 text-red-800 border border-red-200",
-  Medio: "bg-amber-100 text-amber-800 border border-amber-200",
-  Bajo: "bg-emerald-100 text-emerald-800 border border-emerald-200",
-};
 
 function habitoBadgeClass(habito: string): string {
   if (habito === "Consumo creciente") return "bg-violet-100 text-violet-800 border border-violet-200";
@@ -75,10 +72,8 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
 
   useEffect(() => {
     if (!token) return;
-    const params = new URLSearchParams();
-    if (desde) params.set("desde", desde);
-    if (hasta) params.set("hasta", hasta);
-    const urlHabitos = params.toString() ? `${API_HABITOS}?${params}` : API_HABITOS;
+    const params = buildAnalyticsQueryParams(desde, hasta);
+    const urlHabitos = `${API_HABITOS}?${params}`;
     setLoading(true);
     setError(null);
     Promise.all([
@@ -87,7 +82,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
         if (!res.ok) throw new Error("Error al cargar hábitos de consumo");
         return (await res.json()) as HabitosData;
       }),
-      getAnalyticsDemandaVsConsumo(token, { desde: desde || undefined, hasta: hasta || undefined, limit: 50 }),
+      getAnalyticsDemandaVsConsumo(token, { desde, hasta, limit: 50 }),
     ])
       .then(([h, i]) => {
         setHabitos(h);
@@ -104,6 +99,17 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
     () => Array.from(new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`))).sort(),
     [consumo_mensual],
   );
+
+  /** Meses del rango filtrado (calendario); en histórico, solo meses con datos. */
+  const mesesEnPeriodo = useMemo(() => {
+    if (desde && hasta) {
+      const calendario = enumerateMonthsInRange(desde, hasta);
+      if (calendario.length > 0) return calendario;
+    }
+    return labelsMensualRaw;
+  }, [desde, hasta, labelsMensualRaw]);
+
+  const mostrarSelectorMes = mesesEnPeriodo.length > 1;
   const labelsMensualDisplay = useMemo(
     () => labelsMensualRaw.map((ym) => {
       const [y, m] = ym.split("-");
@@ -118,14 +124,17 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
   );
 
   useEffect(() => {
-    if (labelsMensualRaw.length === 0) {
+    if (mesesEnPeriodo.length === 0) {
       setMesSeleccionado("");
       return;
     }
-    setMesSeleccionado((actual) =>
-      actual && labelsMensualRaw.includes(actual) ? actual : labelsMensualRaw[labelsMensualRaw.length - 1] ?? "",
-    );
-  }, [labelsMensualRaw]);
+    const ymFrom = (iso: string) => (iso.length >= 7 ? iso.slice(0, 7) : null);
+    const hastaYm = hasta ? ymFrom(hasta) : null;
+    const preferred =
+      (hastaYm && mesesEnPeriodo.includes(hastaYm) ? hastaYm : null) ||
+      mesesEnPeriodo[mesesEnPeriodo.length - 1];
+    setMesSeleccionado(preferred ?? "");
+  }, [mesesEnPeriodo, hasta]);
 
   const chartMensual = useMemo(
     () => ({
@@ -273,30 +282,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
     };
   }, [resumenPeriodo.promedioMensual, totalMesSeleccionado, productosMesSeleccionado]);
 
-  const ocultarTarjetasMesExtremo = useMemo(() => {
-    if (!desde) return false;
-    const desdeDate = new Date(`${desde}T00:00:00`);
-    if (Number.isNaN(desdeDate.getTime())) return false;
-    const hastaDate = hasta ? new Date(`${hasta}T00:00:00`) : null;
-    const hastaValida = !!hastaDate && !Number.isNaN(hastaDate.getTime());
-    const hoy = new Date();
-    const desdeEsMesActual =
-      desdeDate.getFullYear() === hoy.getFullYear() &&
-      desdeDate.getMonth() === hoy.getMonth();
-    const hastaEsMesActual = hastaValida
-      ? hastaDate.getFullYear() === hoy.getFullYear() &&
-        hastaDate.getMonth() === hoy.getMonth()
-      : false;
-    const mismoMesRango = hastaValida
-      ? desdeDate.getFullYear() === hastaDate.getFullYear() &&
-        desdeDate.getMonth() === hastaDate.getMonth()
-      : false;
-    return (
-      mismoMesRango ||
-      desdeEsMesActual ||
-      hastaEsMesActual
-    );
-  }, [desde, hasta]);
+  const ocultarTarjetasMesExtremo = mesesEnPeriodo.length <= 1;
 
   const formatearPorcentaje = (value: number) => {
     const r = Math.round(value * 10) / 10;
@@ -320,7 +306,10 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
         </p>
         {!loading && !error && habitos && (
           <p className="text-sm text-gray-500 mt-2">
-            Período: {formatIsoDateToDMY(habitos.filtro_desde)} — {formatIsoDateToDMY(habitos.filtro_hasta)}
+            <>
+              Período: {formatIsoDateToDMY(habitos.filtro_desde ?? desde)} —{" "}
+              {formatIsoDateToDMY(habitos.filtro_hasta ?? hasta)}
+            </>
           </p>
         )}
       </div>
@@ -430,7 +419,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                 <div className="space-y-3" data-testid="analisis-tab-productos-mes-panel">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
-                    {!ocultarTarjetasMesExtremo && (
+                    {mostrarSelectorMes && (
                       <label className="text-xs text-gray-600">
                         Mes:
                         <select
@@ -439,7 +428,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                           onChange={(e) => setMesSeleccionado(e.target.value)}
                           className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 bg-white"
                         >
-                          {[...labelsMensualRaw].reverse().map((ym) => {
+                          {[...mesesEnPeriodo].reverse().map((ym) => {
                             const [anio, mes] = ym.split("-");
                             return <option key={ym} value={ym}>{mes}-{anio}</option>;
                           })}
@@ -460,6 +449,13 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
+                        {productosMesSeleccionado.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="px-6 py-4 text-sm text-center text-gray-500">
+                              Sin consumo registrado en este mes dentro del período filtrado.
+                            </td>
+                          </tr>
+                        )}
                         {productosMesSeleccionado.map((r) => (
                           <tr key={`${r.producto_id}-${r.anio}-${r.mes}`} className="hover:bg-gray-50">
                             <td className="px-6 py-2 text-sm text-gray-900">{r.producto_nombre}</td>
@@ -557,7 +553,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-800">{row.cobertura_texto}</td>
                                 <td className="px-4 py-3">
-                                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${RIESGO_BADGE[row.riesgo] ?? "bg-gray-100 text-gray-700 border border-gray-200"}`}>{row.riesgo}</span>
+                                  <RiskBadgeWithTooltip level={row.riesgo} />
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-700">{row.recomendacion}</td>
                               </tr>

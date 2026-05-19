@@ -28,15 +28,23 @@ test.describe("Release 2 — dashboard analítico (cambios recientes)", () => {
     await expect(page.getByTestId("dashboard-page")).toBeVisible();
   });
 
-  // El filtro ahora se aplica recién al hacer click en "Filtrar" (draft + commit).
-  test("el botón Filtrar aplica el rango de fechas seleccionado", async ({ page }) => {
-    const desde = page.getByTestId("dashboard-fecha-desde");
-    const hasta = page.getByTestId("dashboard-fecha-hasta");
-    const filtrar = page.getByTestId("dashboard-filtrar");
+  test("selector rápido de período analítico carga últimos 30 días por defecto", async ({ page }) => {
+    const selector = page.getByTestId("analytics-period-select");
+    await expect(selector).toBeVisible();
+    await expect(selector).toHaveValue("30d");
+    await expect(page.getByTestId("analytics-period-info")).toContainText("últimos 30 días");
+    await expect(page.getByTestId("analytics-dashboard-section")).toBeVisible();
+  });
 
-    await expect(filtrar).toBeVisible();
+  test("período personalizado muestra campos y aplica el rango limitado", async ({ page }) => {
+    await page.getByTestId("analytics-period-select").selectOption("custom");
+    const panel = page.getByTestId("dashboard-filtro-fechas-panel");
+    await expect(panel).toBeVisible();
+
+    const desde = panel.getByTestId("dashboard-fecha-desde");
+    const filtrar = panel.getByTestId("dashboard-filtrar");
+
     await desde.fill("2099-01-01");
-    await hasta.fill("2099-01-31");
     await filtrar.click();
 
     // Tras filtrar, la sección analítica debe seguir cargada (sin error global).
@@ -115,9 +123,10 @@ test.describe("Release 2 — dashboard analítico (cambios recientes)", () => {
 
   // Caso sin datos (filtrado a 2099): la sección integral muestra los mensajes vacíos.
   test("período sin movimientos muestra estados vacíos en la sección integral", async ({ page }) => {
-    await page.getByTestId("dashboard-fecha-desde").fill("2099-01-01");
-    await page.getByTestId("dashboard-fecha-hasta").fill("2099-01-31");
-    await page.getByTestId("dashboard-filtrar").click();
+    await page.getByTestId("analytics-period-select").selectOption("custom");
+    const panel = page.getByTestId("dashboard-filtro-fechas-panel");
+    await panel.getByTestId("dashboard-fecha-desde").fill("2099-01-01");
+    await panel.getByTestId("dashboard-filtrar").click();
 
     // Banner de analytics sin salidas o gráfico de top vacío como mínimo (puede aparecer cualquiera o ambos).
     await expect(

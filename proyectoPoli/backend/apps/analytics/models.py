@@ -140,3 +140,39 @@ class ResultadoTendenciaLineal(models.Model):
             f"{self.producto.sku} | {self.variable_objetivo} | {self.periodicidad} | "
             f"pred={self.prediccion_siguiente}"
         )
+
+
+class ProyeccionConsumoFuturo(models.Model):
+    """
+    Proyección diaria de consumo OUT a partir de una tendencia lineal.
+    Una fila por día de horizonte futuro (1..N) por resultado de tendencia.
+    """
+    tendencia = models.ForeignKey(
+        ResultadoTendenciaLineal,
+        on_delete=models.CASCADE,
+        related_name="proyecciones",
+    )
+    corrida = models.ForeignKey(
+        CorridaAnalitica,
+        on_delete=models.CASCADE,
+        related_name="proyecciones_consumo",
+    )
+    producto = models.ForeignKey(Producto, on_delete=models.CASCADE, related_name="proyecciones_consumo")
+    fecha = models.DateField()
+    horizonte_dias = models.PositiveIntegerField(
+        help_text="Días hacia adelante desde fecha_fin de la tendencia (1 = primer día proyectado).",
+    )
+    valor_diario = models.DecimalField(max_digits=18, decimal_places=6)
+    consumo_acumulado = models.DecimalField(max_digits=18, decimal_places=6)
+
+    class Meta:
+        verbose_name = "Proyección de consumo futuro"
+        verbose_name_plural = "Proyecciones de consumo futuro"
+        ordering = ["tendencia_id", "horizonte_dias"]
+        unique_together = [["tendencia", "horizonte_dias"]]
+
+    def __str__(self):
+        return (
+            f"{self.producto.sku} | +{self.horizonte_dias}d | {self.fecha} | "
+            f"{self.valor_diario} (acum {self.consumo_acumulado})"
+        )

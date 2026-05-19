@@ -1,14 +1,9 @@
-/**
+﻿/**
  * Sección de análisis interpretativo para compras/inventario.
  */
 import { useEffect, useState } from "react";
 import { getAnalyticsDemandaVsConsumo, type DemandaVsConsumoResponse } from "@/services/api";
-
-const RIESGO_BADGE: Record<string, string> = {
-  Alto: "bg-red-100 text-red-800 border border-red-200",
-  Medio: "bg-amber-100 text-amber-800 border border-amber-200",
-  Bajo: "bg-emerald-100 text-emerald-800 border border-emerald-200",
-};
+import { RiskBadgeWithTooltip } from "@/components/RiskBadgeWithTooltip";
 
 /** Títulos de las tarjetas resumen (mismo tono que las primeras cards). */
 const RESUMEN_CARD_TITLE = "text-xs font-medium text-gray-500 uppercase leading-snug";
@@ -124,6 +119,7 @@ export function DemandaVsConsumoSection({ token, desde, hasta }: DemandaVsConsum
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Insumo</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Demanda vs consumo</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hábito detectado</th>
+                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cobertura</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Riesgo</th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Recomendación</th>
                   </tr>
@@ -146,12 +142,9 @@ export function DemandaVsConsumoSection({ token, desde, hasta }: DemandaVsConsum
                             {row.habito_detectado}
                           </span>
                         </td>
+                        <td className="px-4 py-3 text-sm text-center text-gray-700">{row.cobertura_texto}</td>
                         <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${RIESGO_BADGE[row.riesgo] ?? "bg-gray-100 text-gray-700 border border-gray-200"}`}
-                          >
-                            {row.riesgo}
-                          </span>
+                          <RiskBadgeWithTooltip level={row.riesgo} />
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-700">
                           {row.recomendacion}

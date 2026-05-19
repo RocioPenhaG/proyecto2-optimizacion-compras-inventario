@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -13,15 +13,14 @@ import {
 import { Line } from "react-chartjs-2";
 import {
   getAnalyticsCorridas,
-  getAnalyticsCorridaStatus,
   getAnalyticsCorridaTendencias,
   getAnalyticsTendenciaVisual,
   type CorridaAnalytics,
-  type EstadoCorridaResponse,
   type TendenciaLinealItem,
   type TendenciaVisualResponse,
 } from "@/services/api";
 import { formatIsoDateTimeToDMYHM, formatIsoDateToDMY } from "@/utils/dateFormat";
+import { fmtUnidades as fmtUnidadesEnteras, roundUnidades } from "@/utils/unitsFormat";
 
 interface AnalyticsCorridasSectionProps {
   token: string | null;
@@ -38,10 +37,11 @@ ChartJS.register(
   LineController,
 );
 
-function tendenciaLabel(pendiente: number | undefined) {
-  if (pendiente == null) return "N/D";
-  if (pendiente > 0) return "Creciente";
-  if (pendiente < 0) return "Decreciente";
+function tendenciaInterpretacion(pendiente: unknown): string {
+  const n = roundUnidades(pendiente);
+  if (n == null) return "N/D";
+  if (n > 0) return "Creciente";
+  if (n < 0) return "Decreciente";
   return "Estable";
 }
 
@@ -60,19 +60,6 @@ function corridaEstadoLabel(estado: string | null | undefined): string {
   return CORRIDA_ESTADO_ES[estado] ?? estado;
 }
 
-/** Etiquetas en español para `ResultadoTendenciaLineal.periodicidad`. */
-const TENDENCIA_PERIODICIDAD_ES: Record<string, string> = {
-  DAILY: "Diaria",
-  WEEKLY: "Semanal",
-  MONTHLY: "Mensual",
-  YEARLY: "Anual",
-};
-
-function tendenciaPeriodicidadLabel(periodicidad: string | null | undefined): string {
-  if (periodicidad == null || periodicidad === "") return "N/D";
-  return TENDENCIA_PERIODICIDAD_ES[periodicidad] ?? periodicidad;
-}
-
 /** Texto columna Tendencias: "X de Y productos analizados" o respaldo sin total. */
 function textoTendenciasCorrida(
   resultadosCount: number,
@@ -86,45 +73,40 @@ function textoTendenciasCorrida(
   return "Sin tendencias";
 }
 
-function asNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-/** Unidades de consumo / predicción: valores enteros en UI y gráficos. */
-function roundUnidades(value: unknown): number | null {
-  const n = asNumber(value);
-  if (n == null) return null;
-  return Math.round(n);
-}
-
 function fmtUnidades(value: unknown): string {
-  const n = roundUnidades(value);
-  return n == null ? "N/D" : String(n);
+  return fmtUnidadesEnteras(value, "N/D");
 }
 
-function fmtSigned(value: unknown, digits = 0): string {
-  const n = asNumber(value);
+function fmtVariacionDiaria(value: unknown): string {
+  const n = roundUnidades(value);
   if (n == null) return "N/D";
-  if (n > 0) return `+${n.toFixed(digits)}`;
-  if (n < 0) return n.toFixed(digits);
-  return n.toFixed(digits);
+  if (n > 0) return `+${n}`;
+  if (n === 0) return "+0";
+  return String(n);
 }
+
+function fmtStockCelda(stockActual: number, stockMinimo: number): string {
+  const actual = roundUnidades(stockActual) ?? 0;
+  const minimo = roundUnidades(stockMinimo) ?? 0;
+  return `${actual} / mín. ${minimo}`;
+}
+
+function fmtSugeridoReposicion(cantidad: number | null | undefined): string {
+  const n = roundUnidades(cantidad);
+  if (n == null || n <= 0) return "—";
+  return `${n} unidades`;
+}
+
+const SUGERIDO_TOOLTIP =
+  "El sugerido es orientativo y se calcula con stock mínimo, stock actual y tendencia inmediata.";
 
 export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProps) {
   const [corridas, setCorridas] = useState<CorridaAnalytics[]>([]);
   const [selectedCorridaId, setSelectedCorridaId] = useState<number | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [statusData, setStatusData] = useState<EstadoCorridaResponse | null>(null);
   const [tendencias, setTendencias] = useState<TendenciaLinealItem[]>([]);
   const [selectedTendenciaId, setSelectedTendenciaId] = useState<number | null>(null);
   const [tendenciaVisual, setTendenciaVisual] = useState<TendenciaVisualResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [statusLoading, setStatusLoading] = useState(false);
   const [tendenciasLoading, setTendenciasLoading] = useState(false);
   const [tendenciaVisualLoading, setTendenciaVisualLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,25 +119,11 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
       .then((res) => {
         setCorridas(res.results || []);
         const firstCorrida = (res.results || [])[0];
-        const firstTaskId = (res.results || []).find((c) => c.task_id)?.task_id ?? null;
         setSelectedCorridaId(firstCorrida?.id ?? null);
-        setSelectedTaskId(firstTaskId);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Error al cargar corridas"))
       .finally(() => setLoading(false));
   }, [token]);
-
-  useEffect(() => {
-    if (!token || !selectedTaskId) {
-      setStatusData(null);
-      return;
-    }
-    setStatusLoading(true);
-    getAnalyticsCorridaStatus(token, selectedTaskId)
-      .then(setStatusData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Error al cargar estado"))
-      .finally(() => setStatusLoading(false));
-  }, [token, selectedTaskId]);
 
   useEffect(() => {
     if (!token || selectedCorridaId == null) {
@@ -188,13 +156,22 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
   }, [token, selectedTendenciaId]);
 
   const hasTrendDetails = useMemo(() => tendencias.length > 0, [tendencias]);
+
+  const tendenciasOrdenadas = useMemo(() => {
+    return [...tendencias].sort((a, b) => {
+      const pa = roundUnidades(a.prediccion_siguiente) ?? 0;
+      const pb = roundUnidades(b.prediccion_siguiente) ?? 0;
+      return pb - pa;
+    });
+  }, [tendencias]);
   const hasVisualData =
     (tendenciaVisual?.historico?.length ?? 0) > 0 && (tendenciaVisual?.tendencia?.length ?? 0) > 0;
   const rawChartLabels = useMemo(() => {
     if (!tendenciaVisual) return [];
-    const labels = tendenciaVisual.historico.map((h) => h.fecha);
-    if (tendenciaVisual.prediccion?.fecha) labels.push(tendenciaVisual.prediccion.fecha);
-    return labels;
+    const hist = tendenciaVisual.historico.map((h) => h.fecha);
+    const predFecha = tendenciaVisual.prediccion?.fecha;
+    if (predFecha && !hist.includes(predFecha)) return [...hist, predFecha];
+    return hist;
   }, [tendenciaVisual]);
 
   const chartLabelsDisplay = useMemo(
@@ -211,13 +188,9 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
     const predValor = tendenciaVisual.prediccion?.valor;
 
     const consumoData = rawChartLabels.map((label) => roundUnidades(historicoMap.get(label)));
-    const tendenciaData = rawChartLabels.map((label) => {
-      const raw =
-        label === predFecha ? (predValor ?? tendenciaMap.get(label)) : tendenciaMap.get(label);
-      return roundUnidades(raw);
-    });
+    const tendenciaData = rawChartLabels.map((label) => roundUnidades(tendenciaMap.get(label)));
     const predData = rawChartLabels.map((label) =>
-      label === predFecha ? roundUnidades(predValor) : null,
+      label === predFecha ? roundUnidades(predValor) : undefined,
     );
 
     return {
@@ -242,12 +215,12 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
           tension: 0,
         },
         {
-          label: "Predicción siguiente",
+          label: "Estimación día siguiente (tendencia)",
           data: predData,
           borderColor: "rgb(234, 88, 12)",
           backgroundColor: "rgb(234, 88, 12)",
           showLine: false,
-          pointRadius: 6,
+          pointRadius: 4,
         },
       ],
     };
@@ -260,7 +233,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
       animation: false as const,
       plugins: {
         legend: { position: "top" as const },
-        title: { display: true, text: "Consumo histórico vs predicción" },
+        title: { display: true, text: "Consumo histórico y tendencia lineal" },
         tooltip: {
           callbacks: {
             label(ctx: { dataset?: { label?: string }; parsed: { y: number | null } }) {
@@ -332,7 +305,6 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                     className={`hover:bg-gray-50 ${selectedCorridaId === c.id ? "bg-blue-50" : ""}`}
                     onClick={() => {
                       setSelectedCorridaId(c.id);
-                      setSelectedTaskId(c.task_id);
                       setSelectedTendenciaId(null);
                       setTendenciaVisual(null);
                     }}
@@ -355,64 +327,96 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-4" data-testid="tendencias-lineales-panel">
-        <h4 className="text-sm font-semibold text-gray-700 uppercase mb-3">Detalle de tendencias lineales</h4>
+      <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="tendencias-lineales-panel">
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Detalle de tendencias lineales
+          </h4>
+        </div>
+        <div className="p-4">
+        <p className="text-xs text-gray-500 mb-3 max-w-3xl" data-testid="tendencias-reposicion-aviso">
+          La reposición sugerida es orientativa y se calcula a partir del stock actual, el stock mínimo
+          configurado y la tendencia inmediata del consumo. No representa una orden automática de compra.
+        </p>
         {tendenciasLoading ? (
           <p className="text-sm text-gray-500">Consultando resultados de tendencia...</p>
-        ) : statusLoading ? (
-          <p className="text-sm text-gray-500">Consultando estado de la corrida...</p>
-        ) : !statusData && selectedTaskId ? (
-          <p className="text-sm text-gray-500">Esperando estado de corrida...</p>
         ) : selectedCorridaId == null ? (
           <p className="text-sm text-gray-500" data-testid="tendencias-sin-corrida">
-            Seleccioná una corrida con task_id para ver detalle.
+            Seleccioná una corrida para ver el detalle.
           </p>
         ) : hasTrendDetails ? (
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
           <table className="min-w-full divide-y divide-gray-200" data-testid="tendencias-tabla">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Producto</th>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Periodicidad</th>
-                <th
-                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
-                  title="Cantidad de días usados para el cálculo"
-                >
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Stock</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Periodicidad</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
                   Días analizados
                 </th>
-                <th
-                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
-                  title="Cambio promedio del consumo por día"
-                >
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
                   Variación diaria (unidades)
                 </th>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predicción sig.</th>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Rango</th>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Interpretación</th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                  Predicción sig.
+                </th>
+                <th
+                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
+                  title={SUGERIDO_TOOLTIP}
+                >
+                  Sugerido
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Rango</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Interpretación</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {tendencias.map((t) => (
+              {tendenciasOrdenadas.map((t) => (
                 <tr
                   key={t.id}
                   data-testid={`tendencia-row-${t.id}`}
-                  className={`cursor-pointer hover:bg-gray-50 ${
-                    selectedTendenciaId === t.id ? "bg-blue-50" : ""
+                  className={`cursor-pointer hover:bg-sky-50 ${
+                    selectedTendenciaId === t.id ? "bg-sky-100" : ""
                   }`}
                   onClick={() => setSelectedTendenciaId(t.id)}
                 >
-                  <td className="px-4 py-2 text-sm text-center">{t.producto_nombre}</td>
-                  <td className="px-4 py-2 text-sm text-center">{tendenciaPeriodicidadLabel(t.periodicidad)}</td>
-                  <td className="px-4 py-2 text-sm text-center">{t.puntos_usados}</td>
-                  <td className="px-4 py-2 text-sm text-center">{fmtSigned(t.pendiente, 0)}</td>
-                  <td className="px-4 py-2 text-sm text-center">{fmtUnidades(t.prediccion_siguiente)}</td>
-                  <td className="px-4 py-2 text-sm text-center">
-                    {formatIsoDateToDMY(t.fecha_inicio)} — {formatIsoDateToDMY(t.fecha_fin)}
+                  <td className="px-4 py-2 text-sm text-left text-gray-900">{t.producto_nombre}</td>
+                  <td className="px-4 py-2 text-sm text-left text-gray-700 tabular-nums whitespace-nowrap">
+                    {fmtStockCelda(t.stock_actual, t.stock_minimo)}
                   </td>
-                  <td className="px-4 py-2 text-sm text-center">{tendenciaLabel(t.pendiente)}</td>
+                  <td className="px-4 py-2 text-sm text-left text-gray-700">Diaria</td>
+                  <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
+                    {roundUnidades(t.puntos_usados) ?? "N/D"}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
+                    {fmtVariacionDiaria(t.pendiente)}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
+                    {fmtUnidades(t.prediccion_siguiente)}
+                  </td>
+                  <td
+                    className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums"
+                    data-testid={`tendencia-sugerido-${t.id}`}
+                    title={
+                      (roundUnidades(t.cantidad_sugerida_reposicion) ?? 0) > 0
+                        ? `${SUGERIDO_TOOLTIP} (${t.criterio_reposicion})`
+                        : undefined
+                    }
+                  >
+                    {fmtSugeridoReposicion(t.cantidad_sugerida_reposicion)}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-left text-gray-700 whitespace-nowrap">
+                    {formatIsoDateToDMY(t.fecha_inicio)} - {formatIsoDateToDMY(t.fecha_fin)}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-left text-gray-900">
+                    {tendenciaInterpretacion(t.pendiente)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <p className="text-sm text-gray-500" data-testid="tendencias-sin-resultados">
             La corrida seleccionada no tiene resultados de tendencia.
@@ -439,9 +443,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                     <span className="text-xs text-gray-500">Actualizando gráfico...</span>
                   )}
                 </div>
-                <p className="text-sm text-gray-600" data-testid="tendencias-prediccion-texto">
-                  Predicción siguiente: {fmtUnidades(tendenciaVisual.prediccion?.valor)} unidades
-                </p>
+                <div className="text-sm text-gray-600 space-y-1" data-testid="tendencias-prediccion-texto">
+                  <p>
+                    Predicción día siguiente: {fmtUnidades(tendenciaVisual.prediccion?.valor)} unidades
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    La reposición de inventario debe evaluarse con stock actual, stock mínimo y criterio
+                    operativo; este gráfico no sugiere cantidades de compra.
+                  </p>
+                </div>
                 <div className="h-80" data-testid="tendencias-chart-linea">
                   <Line data={chartData} options={chartOptions} />
                 </div>
@@ -449,6 +459,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
             )}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

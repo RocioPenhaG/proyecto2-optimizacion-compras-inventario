@@ -15,15 +15,14 @@ from .serializers import ProveedorSerializer, ProductoCatalogoSerializer, Produc
 def estadisticas_productos(request):
     """Cuenta de productos con stock por debajo del mínimo (para panel/alertas)."""
     productos = Producto.objects.filter(stock_minimo__gt=0).select_related("stock")
-
-    def es_critico(p):
+    count = 0
+    for p in productos:
         try:
             qty = int(p.stock.qty_on_hand)
         except Exception:
             qty = 0
-        return qty <= p.stock_minimo
-
-    count = sum(1 for p in productos if es_critico(p))
+        if qty <= p.stock_minimo:
+            count += 1
     return Response({"productos_stock_critico": count})
 
 class ProveedorViewSet(viewsets.ModelViewSet):

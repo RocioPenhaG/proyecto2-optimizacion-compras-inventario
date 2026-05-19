@@ -14,6 +14,7 @@ import {
   BarController,
 } from "chart.js";
 import { Bar } from "react-chartjs-2";
+import { enumerateMonthsInRange } from "@/utils/analyticsDateRange";
 import { formatIsoDateToDMY } from "@/utils/dateFormat";
 
 ChartJS.register(
@@ -91,6 +92,16 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
     () => Array.from(new Set(consumo_mensual.map((r) => `${r.anio}-${String(r.mes).padStart(2, "0")}`))).sort(),
     [consumo_mensual],
   );
+
+  const mesesEnPeriodo = useMemo(() => {
+    if (desde && hasta) {
+      const calendario = enumerateMonthsInRange(desde, hasta);
+      if (calendario.length > 0) return calendario;
+    }
+    return labelsMensualRaw;
+  }, [desde, hasta, labelsMensualRaw]);
+
+  const mostrarSelectorMes = mesesEnPeriodo.length > 1;
   const labelsMensualDisplay = useMemo(
     () =>
       labelsMensualRaw.map((ym) => {
@@ -107,14 +118,17 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
   });
 
   useEffect(() => {
-    if (labelsMensualRaw.length === 0) {
+    if (mesesEnPeriodo.length === 0) {
       setMesSeleccionado("");
       return;
     }
-    setMesSeleccionado((actual) =>
-      actual && labelsMensualRaw.includes(actual) ? actual : labelsMensualRaw[labelsMensualRaw.length - 1] ?? "",
-    );
-  }, [labelsMensualRaw]);
+    const ymFrom = (iso: string) => (iso.length >= 7 ? iso.slice(0, 7) : null);
+    const hastaYm = hasta ? ymFrom(hasta) : null;
+    const preferred =
+      (hastaYm && mesesEnPeriodo.includes(hastaYm) ? hastaYm : null) ||
+      mesesEnPeriodo[mesesEnPeriodo.length - 1];
+    setMesSeleccionado(preferred ?? "");
+  }, [mesesEnPeriodo, hasta]);
 
   const chartMensual = useMemo(
     () => ({
@@ -340,24 +354,26 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
               <h4 className="text-sm font-medium text-gray-700">Productos más consumidos del mes seleccionado</h4>
               <div className="flex items-center gap-3">
                 <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
-                <label className="text-xs text-gray-600">
-                  Mes:
-                  <select
-                    value={mesSeleccionado}
-                    onChange={(e) => setMesSeleccionado(e.target.value)}
-                    className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 bg-white"
-                    data-testid="habitos-select-mes"
-                  >
-                    {[...labelsMensualRaw].reverse().map((ym) => {
-                      const [anio, mes] = ym.split("-");
-                      return (
-                        <option key={ym} value={ym}>
-                          {mes}-{anio}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
+                {mostrarSelectorMes && (
+                  <label className="text-xs text-gray-600">
+                    Mes:
+                    <select
+                      value={mesSeleccionado}
+                      onChange={(e) => setMesSeleccionado(e.target.value)}
+                      className="ml-2 border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 bg-white"
+                      data-testid="habitos-select-mes"
+                    >
+                      {[...mesesEnPeriodo].reverse().map((ym) => {
+                        const [anio, mes] = ym.split("-");
+                        return (
+                          <option key={ym} value={ym}>
+                            {mes}-{anio}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </label>
+                )}
               </div>
             </div>
             <table className="min-w-full divide-y divide-gray-200">

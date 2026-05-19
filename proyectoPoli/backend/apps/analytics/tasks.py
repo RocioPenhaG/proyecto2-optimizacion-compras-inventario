@@ -78,3 +78,17 @@ def run_etl_analitico_d1(self, metodo=CorridaAnalitica.Metodo.MANUAL):
         "registros_procesados": corrida.registros_procesados,
         "fecha_procesada": str(ayer),
     }
+
+
+@shared_task(name="apps.analytics.tasks.limpiar_datos_analiticos_programado")
+def limpiar_datos_analiticos_programado(dias_retencion=180):
+    """
+    Tarea opcional de retención: depura corridas y tendencias antiguas.
+
+    No está en CELERY_BEAT_SCHEDULE por defecto. Para programarla, agregar una entrada
+    en settings que invoque esta task (p. ej. semanal).
+    """
+    from apps.analytics.services.retencion import limpiar_datos_analiticos
+
+    resultado = limpiar_datos_analiticos(dias_retencion=dias_retencion, dry_run=False)
+    return resultado.as_dict()

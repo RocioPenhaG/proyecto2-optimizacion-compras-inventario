@@ -1,6 +1,6 @@
 """
 Comando para ejecutar el proceso ETL analítico (Release 1 — ejecución manual).
-Uso: python manage.py run_etl_analitico [--desde YYYY-MM-DD] [--hasta YYYY-MM-DD] [--ventana-tendencia-dias 30]
+Uso: python manage.py run_etl_analitico [--desde YYYY-MM-DD] [--hasta YYYY-MM-DD] [--ventana-tendencia-dias 30] [--proyeccion-horizonte-dias 30]
 """
 from datetime import datetime
 
@@ -21,11 +21,18 @@ class Command(BaseCommand):
             default=30,
             help="Ventana histórica para cálculo de tendencias (default: 30 días).",
         )
+        parser.add_argument(
+            "--proyeccion-horizonte-dias",
+            type=int,
+            default=30,
+            help="Días futuros a proyectar por producto (default: 30).",
+        )
 
     def handle(self, *args, **options):
         desde = options.get("desde")
         hasta = options.get("hasta")
         ventana_tendencia_dias = options.get("ventana_tendencia_dias")
+        proyeccion_horizonte_dias = options.get("proyeccion_horizonte_dias")
         if desde:
             try:
                 desde = datetime.strptime(desde, "%Y-%m-%d").date()
@@ -44,12 +51,16 @@ class Command(BaseCommand):
         if ventana_tendencia_dias is not None and ventana_tendencia_dias < 1:
             self.stderr.write(self.style.ERROR("--ventana-tendencia-dias debe ser >= 1."))
             return
+        if proyeccion_horizonte_dias is not None and proyeccion_horizonte_dias < 1:
+            self.stderr.write(self.style.ERROR("--proyeccion-horizonte-dias debe ser >= 1."))
+            return
 
         try:
             corrida = ejecutar_etl_analitico(
                 fecha_desde=desde,
                 fecha_hasta=hasta,
                 tendencia_ventana_dias=ventana_tendencia_dias,
+                proyeccion_horizonte_dias=proyeccion_horizonte_dias,
             )
             self.stdout.write(
                 self.style.SUCCESS(

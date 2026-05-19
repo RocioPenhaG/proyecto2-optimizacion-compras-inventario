@@ -1,5 +1,11 @@
 from django.contrib import admin
-from .models import CorridaAnalitica, HechoConsumo, ResumenConsumoMensual, ResultadoTendenciaLineal
+from .models import (
+    CorridaAnalitica,
+    HechoConsumo,
+    ProyeccionConsumoFuturo,
+    ResumenConsumoMensual,
+    ResultadoTendenciaLineal,
+)
 
 
 class ResultadoTendenciaLinealInline(admin.TabularInline):
@@ -72,6 +78,23 @@ class HechoConsumoAdmin(admin.ModelAdmin):
 class ResumenConsumoMensualAdmin(admin.ModelAdmin):
     list_display = ("producto", "anio", "mes", "cantidad_salidas", "promedio_diario", "dias_con_movimiento")
     list_filter = ("anio", "mes")
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(ProyeccionConsumoFuturo)
+class ProyeccionConsumoFuturoAdmin(admin.ModelAdmin):
+    list_display = (
+        "corrida",
+        "producto",
+        "fecha",
+        "horizonte_dias",
+        "valor_diario",
+        "consumo_acumulado",
+    )
+    list_filter = ("corrida", "horizonte_dias")
+    search_fields = ("producto__nombre", "producto__sku")
 
     def has_add_permission(self, request):
         return False
