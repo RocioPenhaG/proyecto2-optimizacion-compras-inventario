@@ -54,7 +54,7 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
   // Tabla de corridas registradas por el ETL (vacía o con filas).
   test("visualización del historial de corridas analíticas", async ({ page }) => {
     await expect(page.getByTestId("corridas-etl-section")).toBeVisible();
-    await expect(page.getByTestId("corridas-etl-table")).toBeVisible();
+    await expect(page.getByTestId("corridas-table")).toBeVisible();
     await expect(
       page.getByTestId("corridas-etl-empty").or(page.locator("[data-testid^=\"corrida-row-\"]").first()),
     ).toBeVisible();
@@ -66,21 +66,19 @@ test.describe("Release 2 — dashboard analítico (usuario con permisos)", () =>
 
   // Panel de tendencias: tabla de coeficientes o mensaje; con datos, gráfico de línea y predicción.
   test("visualización de tendencias lineales", async ({ page }) => {
-    await expect(page.getByTestId("tendencias-lineales-panel")).toBeVisible();
-    const tabla = page.getByTestId("tendencias-tabla");
+    await expect(page.getByTestId("tendencias-panel")).toBeVisible();
+    const tabla = page.getByTestId("tendencias-table");
     const sinResultados = page.getByTestId("tendencias-sin-resultados");
     const elegir = page.getByTestId("tendencias-sin-corrida");
     const panelVisual = page.getByTestId("tendencias-visual-panel");
-    const insuficiente = page.getByTestId("tendencias-visual-insuficiente");
+    const insuficiente = page.getByTestId("insufficient-data-message");
     await expect(tabla.or(sinResultados).or(elegir).or(panelVisual).or(insuficiente)).toBeVisible({
       timeout: 45_000,
     });
     if (await panelVisual.isVisible()) {
-      await expect(page.getByTestId("tendencias-chart-linea").locator("canvas")).toBeVisible();
-      await expect(page.getByTestId("tendencias-prediccion-texto")).toContainText("tendencia lineal");
-      await expect(
-        page.getByTestId("tendencias-chart-linea"),
-      ).toBeVisible();
+      await expect(page.getByTestId("tendencia-chart").locator("canvas")).toBeVisible();
+      await expect(page.getByTestId("tendencias-prediccion-texto")).toContainText("Predicción");
+      await expect(page.getByTestId("tendencia-chart")).toBeVisible();
     }
   });
 

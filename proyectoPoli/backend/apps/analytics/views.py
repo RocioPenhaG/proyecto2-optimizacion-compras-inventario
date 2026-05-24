@@ -30,6 +30,14 @@ from .etl import (
 )
 from .proyecciones import cantidad_entera
 from .date_range import parse_fechas
+from .demanda_consumo import (
+    cobertura_desde_stock,
+    demanda_vs_consumo_texto,
+    dias_periodo_inclusivo,
+    habito_detectado,
+    periodo_payload,
+    riesgo_y_recomendacion_demanda,
+)
 from .tasks import run_etl_analitico_d1
 
 
@@ -333,30 +341,13 @@ def top_productos_consumidos(request):
     })
 
 
-def _clasificar_demanda_vs_consumo(cantidad_solicitada: int, cantidad_consumida: int):
-    """
-    diferencia = solicitado - consumido.
-    Coherente si |diff| <= 1 o |diff| <= 10% del máximo entre solicitado y consumido.
-    """
-    diff = int(cantidad_solicitada) - int(cantidad_consumida)
-    mx = max(int(cantidad_solicitada), int(cantidad_consumida))
-    if mx == 0:
-        return diff, "coherente", "Demanda coherente"
-    umbral_rel = 0.10 * mx
-    coherente = abs(diff) <= 1 or abs(diff) <= umbral_rel
-    if coherente:
-        return diff, "coherente", "Demanda coherente"
-    if diff > 0:
-        return diff, "solicitado_mayor", "Se solicita más de lo que se consume"
-    return diff, "consumo_mayor", "Se consume más de lo solicitado"
-
-
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def demanda_vs_consumo(request):
     """
     Compara cantidades solicitadas (detalle de solicitudes en el rango) vs consumidas
-    (HechoConsumo OUT, misma fuente que el ranking de productos más consumidos).
+    (HechoConsumo OUT). Usa ``desde``/``hasta`` del filtro global del dashboard;
+    sin parámetros, últimos 30 días. Tendencias: última por producto desde ETL.
     """
     if not puede_ver_analytics(request.user):
         return Response(
@@ -404,6 +395,7 @@ def demanda_vs_consumo(request):
         s["producto_id"] for s in StockProducto.objects.filter(qty_on_hand__gt=0).values("producto_id")
     }
 
+    # Última tendencia ETL por producto (precalculada; no filtrada por el rango del dashboard).
     pendiente_por_producto = {}
     for t in (
         ResultadoTendenciaLineal.objects.select_related("corrida")
@@ -418,67 +410,8 @@ def demanda_vs_consumo(request):
     all_ids = set(por_solicitud.keys()) | set(por_consumo.keys()) | set(stock_relevante_ids)
     all_ids.discard(None)
     productos_map = {p.id: p for p in Producto.objects.filter(id__in=all_ids)}
-    dias_periodo = _dias_periodo_analitico(fecha_desde, fecha_hasta)
-
-    def _habito_detectado(pid: int, consumo: int, dias_con_consumo: int):
-        pendiente = pendiente_por_producto.get(pid)
-        if pendiente is not None:
-            if pendiente > 0.2:
-                return "Consumo creciente"
-            if pendiente < -0.2:
-                return "Consumo decreciente"
-            return "Consumo estable"
-        if consumo <= 0:
-            return "Sin consumo reciente"
-        frecuencia = dias_con_consumo / dias_periodo
-        if frecuencia >= 0.30:
-            return "Consumo frecuente"
-        return "Consumo esporádico"
-
-    def _cobertura(stock_actual: int, consumo_promedio_diario: float):
-        if stock_actual <= 0:
-            return None, "Sin stock"
-        if consumo_promedio_diario > 0:
-            dias = int(round(stock_actual / consumo_promedio_diario))
-            return dias, f"{dias} días"
-        if consumo_promedio_diario == 0:
-            return None, "Sin consumo reciente"
-        return None, "No disponible"
-
-    def _demanda_vs_consumo_texto(solicitado: int, consumido: int):
-        diff, estado, lectura = _clasificar_demanda_vs_consumo(solicitado, consumido)
-        if estado == "consumo_mayor":
-            return diff, estado, lectura, "Se consume más de lo solicitado"
-        if estado == "solicitado_mayor":
-            return diff, estado, lectura, "Se solicita más de lo que se consume"
-        return diff, estado, lectura, "Demanda coherente"
-
-    def _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias, habito, estado):
-        consumo_fuerte = habito in ("Consumo frecuente", "Consumo creciente")
-        if ((cobertura_dias is not None and cobertura_dias <= 7) or stock_actual <= stock_minimo) and consumo_fuerte:
-            riesgo = "Alto"
-        elif (cobertura_dias is not None and 8 <= cobertura_dias <= 15) or estado == "consumo_mayor":
-            riesgo = "Medio"
-        else:
-            riesgo = "Bajo"
-
-        if stock_actual <= 0 or cobertura_dias == 0:
-            recomendacion = "Reponer urgente"
-        elif habito == "Sin consumo reciente":
-            recomendacion = "Revisar stock inmovilizado"
-        elif estado == "consumo_mayor" and cobertura_dias is not None and cobertura_dias <= 7:
-            recomendacion = "Revisar reposición"
-        elif estado == "solicitado_mayor":
-            recomendacion = "Validar necesidad"
-        elif riesgo == "Alto":
-            recomendacion = "Reponer pronto"
-        elif riesgo == "Medio":
-            recomendacion = "Monitorear"
-        elif habito in ("Bajo movimiento", "Sin consumo reciente") and stock_actual > max(stock_minimo * 2, 0):
-            recomendacion = "No priorizar compra"
-        else:
-            recomendacion = "Sin acción inmediata"
-        return riesgo, recomendacion
+    dias_periodo = dias_periodo_inclusivo(fecha_desde, fecha_hasta)
+    periodo = periodo_payload(fecha_desde, fecha_hasta)
 
     rows_full = []
     total_solicitado = 0
@@ -495,7 +428,7 @@ def demanda_vs_consumo(request):
         dias_con_consumo = por_dias_consumo.get(pid, 0)
         total_solicitado += sol
         total_consumido += cons
-        diff, estado, lectura, demanda_texto = _demanda_vs_consumo_texto(sol, cons)
+        diff, estado, lectura, demanda_texto = demanda_vs_consumo_texto(sol, cons)
         if estado == "solicitado_mayor":
             n_solicitud_mayor += 1
         elif estado == "consumo_mayor":
@@ -507,11 +440,20 @@ def demanda_vs_consumo(request):
         stock_actual = int(stock_map.get(pid, 0))
         stock_minimo = int(prod.stock_minimo if prod else 0)
         consumo_promedio_diario = round((cons / dias_periodo), 2) if dias_periodo else 0.0
-        cobertura_dias, cobertura_texto = _cobertura(stock_actual, consumo_promedio_diario)
-        habito = _habito_detectado(pid, cons, dias_con_consumo)
+        cobertura_dias, cobertura_texto = cobertura_desde_stock(
+            stock_actual, consumo_promedio_diario
+        )
+        habito = habito_detectado(
+            pendiente_por_producto.get(pid),
+            cons,
+            dias_con_consumo,
+            dias_periodo,
+        )
         if habito == "Sin consumo reciente" and sol > 0:
             habito = "Bajo movimiento"
-        riesgo, recomendacion = _riesgo_y_recomendacion(stock_actual, stock_minimo, cobertura_dias, habito, estado)
+        riesgo, recomendacion = riesgo_y_recomendacion_demanda(
+            stock_actual, stock_minimo, cobertura_dias, habito, estado
+        )
         if riesgo == "Alto":
             n_riesgo_alto += 1
         if cobertura_dias is not None and cobertura_dias <= 7:
@@ -550,8 +492,9 @@ def demanda_vs_consumo(request):
 
     return Response(
         {
-            "desde": str(fecha_desde),
-            "hasta": str(fecha_hasta),
+            "periodo": periodo,
+            "desde": periodo["desde"],
+            "hasta": periodo["hasta"],
             "limit": limit,
             "filtro_historico": False,
             "resumen": {

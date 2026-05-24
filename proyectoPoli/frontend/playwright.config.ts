@@ -25,9 +25,11 @@ export default defineConfig({
   webServer: process.env.E2E_SKIP_WEBSERVER
     ? undefined
     : {
-        command: "npm run dev",
+        // Puerto fijo: si 5173 está libre, Vite arranca ahí; si ya hay servidor, se reutiliza.
+        // Sin strictPort, Vite pasa a 5174 y Playwright hace timeout en 5173 (exit code 1).
+        command: "npm run dev:e2e",
         url: baseURL,
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: true,
         timeout: 120_000,
       },
 });

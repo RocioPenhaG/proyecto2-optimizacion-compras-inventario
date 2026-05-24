@@ -343,20 +343,22 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
               </p>
             </div>
             <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500">
-              <p className="text-xs uppercase text-gray-500">Promedio mensual de consumo</p>
+              <p className="text-xs uppercase text-gray-500">Promedio por mes calendario</p>
               <p className="mt-2 text-base font-semibold text-gray-900">{Math.round(resumenPeriodo.promedioMensual)} unidades</p>
-              <p className="text-sm text-gray-600">Promedio del período filtrado</p>
+              <p className="text-sm text-gray-600">Promedio en el rango filtrado</p>
             </div>
           </div>
 
           <div className="bg-white rounded-lg shadow overflow-hidden">
             <div className="px-4 py-3 bg-gray-50 flex flex-wrap items-center justify-between gap-3">
-              <h4 className="text-sm font-medium text-gray-700">Productos más consumidos del mes seleccionado</h4>
+              <h4 className="text-sm font-medium text-gray-700">Productos más consumidos del período</h4>
               <div className="flex items-center gap-3">
-                <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
+                <p className="text-xs text-gray-500">
+                  {labelMesSeleccionado} · Total del tramo: {totalMesSeleccionado.toLocaleString()} unidades
+                </p>
                 {mostrarSelectorMes && (
                   <label className="text-xs text-gray-600">
-                    Mes:
+                    Mes calendario:
                     <select
                       value={mesSeleccionado}
                       onChange={(e) => setMesSeleccionado(e.target.value)}
@@ -382,7 +384,7 @@ export function HabitosConsumoSection({ token, desde, hasta }: HabitosConsumoSec
                   <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
                   <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
                   <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad consumida</th>
-                  <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">% del total del mes</th>
+                  <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">% del total del tramo</th>
                   <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
                   <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Observación</th>
                 </tr>

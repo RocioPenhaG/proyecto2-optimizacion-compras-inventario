@@ -91,9 +91,12 @@ function fmtStockCelda(stockActual: number, stockMinimo: number): string {
   return `${actual} / mín. ${minimo}`;
 }
 
-function fmtSugeridoReposicion(cantidad: number | null | undefined): string {
+function fmtSugeridoReposicion(
+  cantidad: number | null | undefined,
+  criterio?: string | null,
+): string {
   const n = roundUnidades(cantidad);
-  if (n == null || n <= 0) return "—";
+  if (n == null || n <= 0) return criterio?.trim() || "Stock suficiente";
   return `${n} unidades`;
 }
 
@@ -276,21 +279,25 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         </p>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200" data-testid="corridas-etl-table">
+          <table className="min-w-full divide-y divide-gray-200" data-testid="corridas-table">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
                 <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Datos analizados</th>
-                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Tendencias</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Task</th>
+                <th
+                  className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase"
+                  data-testid="corridas-header-tendencias"
+                >
+                  Tendencias
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {corridas.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={4}
                     className="px-6 py-4 text-center text-sm text-gray-500"
                     data-testid="corridas-etl-empty"
                   >
@@ -312,13 +319,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                     <td className="px-4 py-2 text-sm">{corridaEstadoLabel(c.estado)}</td>
                     <td className="px-4 py-2 text-sm">{formatIsoDateTimeToDMYHM(c.fecha_ejecucion)}</td>
                     <td className="px-4 py-2 text-sm text-center">{c.registros_procesados}</td>
-                    <td className="px-4 py-2 text-sm text-center">
+                    <td
+                      className="px-4 py-2 text-sm text-center"
+                      data-testid={`corrida-tendencias-count-${c.id}`}
+                    >
                       {textoTendenciasCorrida(
                         c.resultados_tendencia_count,
                         c.productos_candidatos_tendencia,
                       )}
                     </td>
-                    <td className="px-4 py-2 text-xs text-gray-500">{c.task_id || "N/A"}</td>
                   </tr>
                 ))
               )}
@@ -327,7 +336,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="tendencias-lineales-panel">
+      <div className="bg-white rounded-lg shadow overflow-hidden" data-testid="tendencias-panel">
         <div className="px-4 py-3 border-b border-gray-100">
           <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             Detalle de tendencias lineales
@@ -346,7 +355,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
           </p>
         ) : hasTrendDetails ? (
           <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200" data-testid="tendencias-tabla">
+          <table className="min-w-full divide-y divide-gray-200" data-testid="tendencias-table">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
@@ -381,18 +390,32 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                   }`}
                   onClick={() => setSelectedTendenciaId(t.id)}
                 >
-                  <td className="px-4 py-2 text-sm text-left text-gray-900">{t.producto_nombre}</td>
-                  <td className="px-4 py-2 text-sm text-left text-gray-700 tabular-nums whitespace-nowrap">
+                  <td
+                    className="px-4 py-2 text-sm text-left text-gray-900"
+                    data-testid={`tendencia-producto-${t.id}`}
+                  >
+                    {t.producto_nombre}
+                  </td>
+                  <td
+                    className="px-4 py-2 text-sm text-left text-gray-700 tabular-nums whitespace-nowrap"
+                    data-testid={`tendencia-stock-${t.id}`}
+                  >
                     {fmtStockCelda(t.stock_actual, t.stock_minimo)}
                   </td>
                   <td className="px-4 py-2 text-sm text-left text-gray-700">Diaria</td>
                   <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
                     {roundUnidades(t.puntos_usados) ?? "N/D"}
                   </td>
-                  <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
+                  <td
+                    className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums"
+                    data-testid={`tendencia-variacion-${t.id}`}
+                  >
                     {fmtVariacionDiaria(t.pendiente)}
                   </td>
-                  <td className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums">
+                  <td
+                    className="px-4 py-2 text-sm text-center text-gray-900 tabular-nums"
+                    data-testid={`tendencia-prediccion-${t.id}`}
+                  >
                     {fmtUnidades(t.prediccion_siguiente)}
                   </td>
                   <td
@@ -404,12 +427,15 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                         : undefined
                     }
                   >
-                    {fmtSugeridoReposicion(t.cantidad_sugerida_reposicion)}
+                    {fmtSugeridoReposicion(t.cantidad_sugerida_reposicion, t.criterio_reposicion)}
                   </td>
                   <td className="px-4 py-2 text-sm text-left text-gray-700 whitespace-nowrap">
                     {formatIsoDateToDMY(t.fecha_inicio)} - {formatIsoDateToDMY(t.fecha_fin)}
                   </td>
-                  <td className="px-4 py-2 text-sm text-left text-gray-900">
+                  <td
+                    className="px-4 py-2 text-sm text-left text-gray-900"
+                    data-testid={`tendencia-interpretacion-${t.id}`}
+                  >
                     {tendenciaInterpretacion(t.pendiente)}
                   </td>
                 </tr>
@@ -430,7 +456,10 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                 Seleccioná una tendencia para ver su comparación.
               </p>
             ) : !hasVisualData ? (
-              <p className="text-sm text-gray-500" data-testid="tendencias-visual-insuficiente">
+              <p
+                className="text-sm text-gray-500"
+                data-testid="insufficient-data-message"
+              >
                 {tendenciaVisual.detail || "No hay datos suficientes para visualizar la tendencia."}
               </p>
             ) : (
@@ -452,7 +481,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                     operativo; este gráfico no sugiere cantidades de compra.
                   </p>
                 </div>
-                <div className="h-80" data-testid="tendencias-chart-linea">
+                <div className="h-80" data-testid="tendencia-chart">
                   <Line data={chartData} options={chartOptions} />
                 </div>
               </div>

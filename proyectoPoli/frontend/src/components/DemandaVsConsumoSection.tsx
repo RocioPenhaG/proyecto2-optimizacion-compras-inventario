@@ -3,6 +3,7 @@
  */
 import { useEffect, useState } from "react";
 import { getAnalyticsDemandaVsConsumo, type DemandaVsConsumoResponse } from "@/services/api";
+import { HabitoBadgeWithTooltip } from "@/components/HabitoBadgeWithTooltip";
 import { RiskBadgeWithTooltip } from "@/components/RiskBadgeWithTooltip";
 
 /** Títulos de las tarjetas resumen (mismo tono que las primeras cards). */
@@ -10,14 +11,6 @@ const RESUMEN_CARD_TITLE = "text-xs font-medium text-gray-500 uppercase leading-
 
 /** Altura fija del encabezado para alinear contadores entre columnas (hasta 2 líneas). */
 const RESUMEN_TITLE_BLOCK = "h-12 flex shrink-0 items-start";
-
-function habitoBadgeClass(habito: string): string {
-  if (habito === "Consumo creciente") return "bg-violet-100 text-violet-800 border border-violet-200";
-  if (habito === "Consumo frecuente") return "bg-indigo-100 text-indigo-800 border border-indigo-200";
-  if (habito === "Consumo estable") return "bg-sky-100 text-sky-800 border border-sky-200";
-  if (habito === "Consumo esporádico") return "bg-gray-100 text-gray-800 border border-gray-200";
-  return "bg-slate-100 text-slate-700 border border-slate-200";
-}
 
 interface DemandaVsConsumoSectionProps {
   token: string | null;
@@ -136,11 +129,7 @@ export function DemandaVsConsumoSection({ token, desde, hasta }: DemandaVsConsum
                           <div>{row.demanda_vs_consumo}</div>
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${habitoBadgeClass(row.habito_detectado)}`}
-                          >
-                            {row.habito_detectado}
-                          </span>
+                          <HabitoBadgeWithTooltip habito={row.habito_detectado} />
                         </td>
                         <td className="px-4 py-3 text-sm text-center text-gray-700">{row.cobertura_texto}</td>
                         <td className="px-4 py-3">

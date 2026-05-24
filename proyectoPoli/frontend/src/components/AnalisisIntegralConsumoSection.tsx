@@ -13,6 +13,7 @@ import { Bar } from "react-chartjs-2";
 import { buildAnalyticsQueryParams, enumerateMonthsInRange } from "@/utils/analyticsDateRange";
 import { formatIsoDateToDMY } from "@/utils/dateFormat";
 import { getAnalyticsDemandaVsConsumo, type DemandaVsConsumoResponse } from "@/services/api";
+import { HabitoBadgeWithTooltip } from "@/components/HabitoBadgeWithTooltip";
 import { RiskBadgeWithTooltip } from "@/components/RiskBadgeWithTooltip";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, BarController);
@@ -52,14 +53,6 @@ interface Props {
   token: string | null;
   desde: string;
   hasta: string;
-}
-
-function habitoBadgeClass(habito: string): string {
-  if (habito === "Consumo creciente") return "bg-violet-100 text-violet-800 border border-violet-200";
-  if (habito === "Consumo frecuente") return "bg-indigo-100 text-indigo-800 border border-indigo-200";
-  if (habito === "Consumo estable") return "bg-sky-100 text-sky-800 border border-sky-200";
-  if (habito === "Consumo esporádico") return "bg-gray-100 text-gray-800 border border-gray-200";
-  return "bg-slate-100 text-slate-700 border border-slate-200";
 }
 
 export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
@@ -264,12 +257,12 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
     const promedio = resumenPeriodo.promedioMensual || 0;
     const total = totalMesSeleccionado;
     const comparacion = promedio === 0
-      ? "sin referencia de promedio mensual"
+      ? "sin referencia de promedio del período analizado"
       : total > promedio * 1.2
-        ? "por encima del promedio mensual"
+        ? "por encima del promedio del período analizado"
         : total < promedio * 0.8
-          ? "por debajo del promedio mensual"
-          : "cercano al promedio mensual";
+          ? "por debajo del promedio del período analizado"
+          : "cercano al promedio del período analizado";
     const top1 = productosMesSeleccionado[0];
     const top3Pct = productosMesSeleccionado.slice(0, 3).reduce((sum, p) => sum + p.porcentajeMes, 0);
     const concentracion = top3Pct >= 70 ? "consumo concentrado en pocos insumos" : "consumo distribuido entre varios insumos";
@@ -374,19 +367,27 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
               <p className="text-sm text-gray-600">{resumenPeriodo.diaMayor ? `${resumenPeriodo.diaMayor.total} unidades` : "Sin datos"}</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4 border-l-4 border-amber-500">
-              <p className="text-xs uppercase text-gray-500">Promedio mensual de consumo</p>
+              <p className="text-xs uppercase text-gray-500">Promedio por mes calendario</p>
               <p className="mt-2 text-base font-semibold text-gray-900">{Math.round(resumenPeriodo.promedioMensual)} unidades</p>
-              <p className="text-sm text-gray-600">Promedio del período filtrado</p>
+              <p className="text-sm text-gray-600">Promedio en el rango filtrado</p>
             </div>
           </div>
 
           <div className="bg-white rounded-lg shadow p-4 border border-gray-100" data-testid="analisis-lectura-periodo">
             <h4 className="text-sm font-medium text-gray-700 uppercase">Lectura del período</h4>
-            <ul className="mt-3 text-sm text-gray-700 space-y-1">
-              <li>El mes seleccionado tuvo {totalMesSeleccionado} unidades consumidas.</li>
+            <ul className="mt-3 text-sm text-gray-700 space-y-1 list-disc list-inside">
+              <li>
+                El período seleccionado registró {totalMesSeleccionado.toLocaleString()} unidades consumidas.
+              </li>
               <li>Este valor está {lecturaPeriodo.comparacion}.</li>
-              <li>El producto más representativo del mes fue {lecturaPeriodo.top1Nombre}, con {formatearPorcentaje(lecturaPeriodo.top1Pct)} del consumo mensual.</li>
-              <li>Los 3 productos principales concentran {formatearPorcentaje(lecturaPeriodo.top3Pct)} del consumo del mes.</li>
+              <li>
+                El producto más representativo fue {lecturaPeriodo.top1Nombre}, con{" "}
+                {formatearPorcentaje(lecturaPeriodo.top1Pct)} del consumo total.
+              </li>
+              <li>
+                Los 3 productos principales concentran {formatearPorcentaje(lecturaPeriodo.top3Pct)} del
+                consumo registrado.
+              </li>
               <li>Esto indica un {lecturaPeriodo.concentracion} durante el período seleccionado.</li>
             </ul>
           </div>
@@ -409,7 +410,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                   onClick={() => setTabActiva("productos_mes")}
                   className={`px-3 py-1.5 text-sm border-l border-gray-200 ${tabActiva === "productos_mes" ? "bg-indigo-600 text-white" : "bg-white text-gray-700 hover:bg-gray-50"}`}
                 >
-                  Productos más consumidos del mes
+                  Productos más consumidos del período
                 </button>
               </div>
             </div>
@@ -418,10 +419,12 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
               {tabActiva === "productos_mes" && (
                 <div className="space-y-3" data-testid="analisis-tab-productos-mes-panel">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs text-gray-500">{labelMesSeleccionado} · Total del mes: {totalMesSeleccionado} unidades</p>
+                    <p className="text-xs text-gray-500">
+                      {labelMesSeleccionado} · Total del tramo: {totalMesSeleccionado.toLocaleString()} unidades
+                    </p>
                     {mostrarSelectorMes && (
                       <label className="text-xs text-gray-600">
-                        Mes:
+                        Mes calendario:
                         <select
                           data-testid="analisis-mes-select"
                           value={mesSeleccionado}
@@ -443,7 +446,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                           <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
                           <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
                           <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cantidad consumida</th>
-                          <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">% del total del mes</th>
+                          <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">% del total del tramo</th>
                           <th className="px-6 py-2 text-center text-xs font-medium text-gray-500 uppercase">Promedio diario</th>
                           <th className="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase">Observación</th>
                         </tr>
@@ -452,7 +455,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                         {productosMesSeleccionado.length === 0 && (
                           <tr>
                             <td colSpan={6} className="px-6 py-4 text-sm text-center text-gray-500">
-                              Sin consumo registrado en este mes dentro del período filtrado.
+                              Sin consumo registrado en el tramo seleccionado dentro del período filtrado.
                             </td>
                           </tr>
                         )}
@@ -480,6 +483,16 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                     </p>
                   ) : (
                     <>
+                      {inteligente.periodo && (
+                        <p
+                          className="text-xs text-gray-500"
+                          data-testid="analisis-inteligente-periodo"
+                        >
+                          Análisis calculado para {formatIsoDateToDMY(inteligente.periodo.desde)} —{" "}
+                          {formatIsoDateToDMY(inteligente.periodo.hasta)} ({inteligente.periodo.dias}{" "}
+                          días)
+                        </p>
+                      )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 items-stretch" data-testid="analisis-inteligente-resumen">
                         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500 flex flex-col h-full">
                           <div className={RESUMEN_TITLE_BLOCK}>
@@ -549,7 +562,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-800">{row.demanda_vs_consumo}</td>
                                 <td className="px-4 py-3">
-                                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${habitoBadgeClass(row.habito_detectado)}`}>{row.habito_detectado}</span>
+                                  <HabitoBadgeWithTooltip habito={row.habito_detectado} />
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-800">{row.cobertura_texto}</td>
                                 <td className="px-4 py-3">

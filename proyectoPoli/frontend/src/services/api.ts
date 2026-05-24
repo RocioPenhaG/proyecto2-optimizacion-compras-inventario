@@ -162,10 +162,18 @@ export interface DemandaVsConsumoResumen {
   mayor_solicitud_consumo: number;
 }
 
+export interface DemandaVsConsumoPeriodo {
+  desde: string;
+  hasta: string;
+  dias: number;
+}
+
 export interface DemandaVsConsumoResponse {
+  periodo: DemandaVsConsumoPeriodo;
   desde: string;
   hasta: string;
   limit: number;
+  filtro_historico?: boolean;
   resumen: DemandaVsConsumoResumen;
   resultados: DemandaVsConsumoItem[];
 }

@@ -53,6 +53,7 @@ from .proyecciones import (
 )
 from .tasks import run_etl_analitico_d1
 from .views import calcular_reposicion_sugerida_tendencia
+from .demanda_consumo import riesgo_y_recomendacion_demanda
 from .services.retencion import limpiar_datos_analiticos
 
 
@@ -528,6 +529,10 @@ class AnalyticsAPITestCase(TestCase):
         body = resp.json()
         self.assertEqual(body["desde"], desde)
         self.assertEqual(body["hasta"], hasta)
+        self.assertIn("periodo", body)
+        self.assertEqual(body["periodo"]["desde"], desde)
+        self.assertEqual(body["periodo"]["hasta"], hasta)
+        self.assertGreaterEqual(body["periodo"]["dias"], 1)
         self.assertEqual(body["resumen"]["total_solicitado"], 350)
         self.assertEqual(body["resumen"]["total_consumido"], 343)
         self.assertEqual(body["resumen"]["mayor_solicitud_que_consumo"], 1)
@@ -604,8 +609,116 @@ class AnalyticsAPITestCase(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         row = next(r for r in resp.json()["resultados"] if r["sku"] == "DVC-COB")
-        self.assertIn("dÃ­as", row["cobertura_texto"])
+        self.assertIn("días", row["cobertura_texto"])
         self.assertNotIn("consumo_proyectado_semana", row)
+
+    @patch("apps.analytics.date_range._today")
+    def test_demanda_vs_consumo_sin_fechas_usa_ultimos_30_dias(self, mock_today):
+        mock_today.return_value = date(2026, 5, 18)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/api/analytics/demanda-vs-consumo/")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["periodo"]["hasta"], "2026-05-18")
+        self.assertEqual(body["periodo"]["desde"], "2026-04-18")
+        self.assertEqual(body["periodo"]["dias"], 31)
+
+    def test_demanda_vs_consumo_filtra_consumo_y_solicitudes_por_rango(self):
+        p = Producto.objects.create(sku="DVC-RNG", nombre="Rango", stock_minimo=0)
+        ref = date(2026, 5, 10)
+        sol = SolicitudInsumo.objects.create(solicitante=self.user, destino="X")
+        sol.creado_en = timezone.make_aware(datetime.combine(ref, datetime.min.time()))
+        sol.save(update_fields=["creado_en"])
+        SolicitudDetalle.objects.create(solicitud=sol, producto=p, cantidad=50)
+        HechoConsumo.objects.create(
+            producto=p, fecha=ref, tipo_movimiento="OUT", cantidad_total=40
+        )
+        HechoConsumo.objects.create(
+            producto=p,
+            fecha=ref - timedelta(days=60),
+            tipo_movimiento="OUT",
+            cantidad_total=999,
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {
+                "desde": (ref - timedelta(days=7)).isoformat(),
+                "hasta": ref.isoformat(),
+            },
+        )
+        body = resp.json()
+        row = body["resultados"][0]
+        self.assertEqual(row["cantidad_solicitada"], 50)
+        self.assertEqual(row["cantidad_consumida"], 40)
+
+    def test_demanda_vs_consumo_usa_ultima_tendencia_etl(self):
+        p = Producto.objects.create(sku="DVC-TREND", nombre="Trend", stock_minimo=0)
+        corrida_vieja = CorridaAnalitica.objects.create(
+            task_id="dvc-old",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            fecha_ejecucion=timezone.now() - timedelta(days=90),
+        )
+        corrida_nueva = CorridaAnalitica.objects.create(
+            task_id="dvc-new",
+            estado=CorridaAnalitica.Estado.SUCCESS,
+            metodo=CorridaAnalitica.Metodo.MANUAL,
+            fecha_ejecucion=timezone.now(),
+        )
+        ResultadoTendenciaLineal.objects.create(
+            corrida=corrida_vieja,
+            producto=p,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 1, 1),
+            fecha_fin=date(2026, 1, 10),
+            puntos_usados=5,
+            pendiente=Decimal("-5.000000"),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("0.900000"),
+            mae=Decimal("1.000000"),
+            rmse=Decimal("1.200000"),
+            prediccion_siguiente=Decimal("5.000000"),
+            metadata={},
+        )
+        ResultadoTendenciaLineal.objects.create(
+            corrida=corrida_nueva,
+            producto=p,
+            variable_objetivo="consumo_out",
+            periodicidad="DAILY",
+            fecha_inicio=date(2026, 4, 1),
+            fecha_fin=date(2026, 4, 10),
+            puntos_usados=5,
+            pendiente=Decimal("3.000000"),
+            intercepto=Decimal("10.000000"),
+            r2=Decimal("0.900000"),
+            mae=Decimal("1.000000"),
+            rmse=Decimal("1.200000"),
+            prediccion_siguiente=Decimal("15.000000"),
+            metadata={},
+        )
+        ref = timezone.localdate()
+        HechoConsumo.objects.create(
+            producto=p, fecha=ref, tipo_movimiento="OUT", cantidad_total=10
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": (ref - timedelta(days=7)).isoformat(), "hasta": ref.isoformat()},
+        )
+        row = resp.json()["resultados"][0]
+        self.assertEqual(row["habito_detectado"], "Consumo creciente")
+
+    def test_riesgo_alto_exige_consumo_fuerte(self):
+        riesgo, _ = riesgo_y_recomendacion_demanda(5, 10, 5, "Consumo esporádico", "coherente")
+        self.assertEqual(riesgo, "Medio")
+        riesgo_alto, _ = riesgo_y_recomendacion_demanda(5, 10, 5, "Consumo creciente", "coherente")
+        self.assertEqual(riesgo_alto, "Alto")
+
+    def test_consumo_mayor_genera_riesgo_medio(self):
+        riesgo, _ = riesgo_y_recomendacion_demanda(100, 10, 30, "Consumo esporádico", "consumo_mayor")
+        self.assertEqual(riesgo, "Medio")
 
     def test_ultima_corrida(self):
         CorridaAnalitica.objects.create(

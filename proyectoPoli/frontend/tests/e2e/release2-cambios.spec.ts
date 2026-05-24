@@ -6,7 +6,7 @@ import { E2E_ANALYTICS_USER, E2E_NO_ANALYTICS_USER, E2E_PASSWORD, login } from "
  *  - Filtro de fechas con botón "Filtrar" (draft + commit).
  *  - Tarjeta y tabla de Stock crítico en el dashboard.
  *  - Nueva sección "Análisis integral de consumo" (reemplazo de Hábitos + Demanda vs Consumo).
- *  - Tabs "Análisis inteligente" / "Productos más consumidos del mes".
+ *  - Tabs "Análisis inteligente" / "Productos más consumidos del período".
  *  - Manejo de período sin datos con la nueva sección.
  *  - Re-validación de acceso denegado para usuarios sin permiso.
  *
@@ -99,8 +99,8 @@ test.describe("Release 2 — dashboard analítico (cambios recientes)", () => {
     await expect(page.getByTestId("analisis-tab-productos-mes-panel")).toHaveCount(0);
   });
 
-  // Cambio de tab a "Productos más consumidos del mes" → muestra tabla del mes.
-  test("se puede cambiar al tab Productos más consumidos del mes", async ({ page }) => {
+  // Cambio de tab a "Productos más consumidos del período" → muestra tabla del tramo.
+  test("se puede cambiar al tab Productos más consumidos del período", async ({ page }) => {
     await page.getByTestId("analisis-tab-productos-mes").click();
     await expect(page.getByTestId("analisis-tab-productos-mes-panel")).toBeVisible();
     await expect(page.getByTestId("analisis-productos-mes-tabla")).toBeVisible();
