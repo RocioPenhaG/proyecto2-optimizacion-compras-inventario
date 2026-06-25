@@ -10,19 +10,19 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        target: "http://backend:8000",
         changeOrigin: true,
       },
-      // Django admin (y estáticos del admin) viven en el backend :8000, no en Vite.
       "/admin": {
-        target: "http://127.0.0.1:8000",
+        target: "http://backend:8000",
         changeOrigin: true,
       },
       "/static": {
-        target: "http://127.0.0.1:8000",
+        target: "http://backend:8000",
         changeOrigin: true,
       },
     },

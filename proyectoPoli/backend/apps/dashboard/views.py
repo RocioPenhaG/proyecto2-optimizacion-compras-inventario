@@ -13,6 +13,8 @@ from rest_framework.response import Response
 from apps.users.models import Role
 from apps.purchases.models import SolicitudInsumo, EstadoSolicitud
 from apps.purchases.models import SolicitudDetalle
+from apps.purchases.rules import queryset_solicitudes_visible_para_rol
+from apps.purchases.stock_alerts import excluir_de_alerta_stock_critico
 from apps.products.models import Producto
 from apps.analytics.date_range import parse_fechas
 from apps.analytics.models import HechoConsumo
@@ -45,7 +47,10 @@ def dashboard_metrics(request):
     desde = str(fecha_desde_date)
     hasta = str(fecha_hasta_date)
 
-    qs_solicitudes = SolicitudInsumo.objects.filter(creado_en__range=(fecha_desde, fecha_hasta))
+    qs_solicitudes = queryset_solicitudes_visible_para_rol(
+        request.user,
+        SolicitudInsumo.objects.filter(creado_en__range=(fecha_desde, fecha_hasta)),
+    )
 
     # Solicitudes por estado
     por_estado = dict(
@@ -131,6 +136,8 @@ def dashboard_metrics(request):
         except Exception:
             stock_actual = 0
         stock_minimo = int(p.stock_minimo or 0)
+        if excluir_de_alerta_stock_critico(p.id, stock_actual):
+            continue
         cantidad_consumida = int(consumo_map.get(p.id, 0))
         if stock_minimo <= 0 and cantidad_consumida <= 0:
             continue

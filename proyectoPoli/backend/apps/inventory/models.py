@@ -71,3 +71,19 @@ class MovStock(models.Model):
             stock.save()
             
         super().save(*args, **kwargs)
+
+    def revertir_efecto_en_stock(self):
+        """Deshace el impacto de este movimiento en StockProducto (para eliminación por administrador)."""
+        stock, _ = StockProducto.objects.get_or_create(producto=self.producto)
+        if self.tipo == "IN":
+            new_qty = stock.qty_on_hand - self.cantidad
+        elif self.tipo == "OUT":
+            new_qty = stock.qty_on_hand + self.cantidad
+        else:
+            new_qty = stock.qty_on_hand - self.cantidad
+        if new_qty < 0:
+            raise ValidationError(
+                "No se puede eliminar el movimiento: el stock quedaría negativo."
+            )
+        stock.qty_on_hand = new_qty
+        stock.save()

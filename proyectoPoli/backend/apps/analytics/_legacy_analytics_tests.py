@@ -556,6 +556,37 @@ class AnalyticsAPITestCase(TestCase):
         self.assertIn("riesgo", by_sku["DVC-A"])
         self.assertIn("recomendacion", by_sku["DVC-A"])
 
+    def test_demanda_vs_consumo_pagina_resultados(self):
+        ref = timezone.localdate() - timedelta(days=2)
+        desde = (ref - timedelta(days=7)).isoformat()
+        hasta = ref.isoformat()
+        for i in range(12):
+            p = Producto.objects.create(sku=f"DVC-PG-{i:02d}", nombre=f"Producto {i}", stock_minimo=0)
+            HechoConsumo.objects.create(
+                producto=p, fecha=ref, tipo_movimiento="OUT", cantidad_total=100 - i
+            )
+        self.client.force_authenticate(user=self.user)
+        resp_p1 = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": desde, "hasta": hasta, "limit": 10, "page": 1},
+        )
+        self.assertEqual(resp_p1.status_code, 200)
+        body_p1 = resp_p1.json()
+        self.assertEqual(body_p1["limit"], 10)
+        self.assertEqual(body_p1["page"], 1)
+        self.assertEqual(body_p1["total"], 12)
+        self.assertEqual(len(body_p1["resultados"]), 10)
+
+        resp_p2 = self.client.get(
+            "/api/analytics/demanda-vs-consumo/",
+            {"desde": desde, "hasta": hasta, "limit": 10, "page": 2},
+        )
+        self.assertEqual(resp_p2.status_code, 200)
+        body_p2 = resp_p2.json()
+        self.assertEqual(body_p2["page"], 2)
+        self.assertEqual(len(body_p2["resultados"]), 2)
+        self.assertEqual(body_p1["resumen"]["total_consumido"], body_p2["resumen"]["total_consumido"])
+
     def test_demanda_vs_consumo_incluye_producto_con_stock(self):
         p_stock = Producto.objects.create(sku="DVC-STOCK", nombre="Con stock", stock_minimo=2)
         StockProducto.objects.create(producto=p_stock, qty_on_hand=9)

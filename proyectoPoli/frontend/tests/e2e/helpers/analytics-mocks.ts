@@ -243,7 +243,9 @@ export async function installAnalyticsVisualMocks(
         periodo: { desde: "2026-04-01", hasta: "2026-04-30", dias: 30 },
         desde: "2026-04-01",
         hasta: "2026-04-30",
-        limit: 50,
+        limit: 10,
+        page: 1,
+        total: 0,
         resumen: {
           total_solicitado: 0,
           total_consumido: 0,

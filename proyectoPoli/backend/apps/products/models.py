@@ -6,6 +6,30 @@ from django.db import IntegrityError, models
 _SKU_SPK_NUMERIC = re.compile(r"^SPK-(\d{4})$")
 
 
+def numero_sku_spk(sku: str | None) -> int | None:
+    """Devuelve el número de un SKU SPK-#### o None si no aplica."""
+    if not sku:
+        return None
+    m = _SKU_SPK_NUMERIC.match(str(sku).strip())
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def renumerar_skus_spk_tras_eliminacion(numero_eliminado: int) -> None:
+    """
+    Tras borrar SPK-NNNN, los productos SPK con número mayor se decrementan en 1
+    (p. ej. SPK-0010 pasa a SPK-0009) para mantener la secuencia sin saltos.
+    """
+    candidatos: list[tuple[int, int]] = []
+    for pk, sku in Producto.objects.values_list("id", "sku"):
+        n = numero_sku_spk(sku)
+        if n is not None and n > numero_eliminado:
+            candidatos.append((n, pk))
+    for n, pk in sorted(candidatos, key=lambda item: item[0]):
+        Producto.objects.filter(pk=pk).update(sku=f"SPK-{n - 1:04d}")
+
+
 def siguiente_sku_spk() -> str:
     """
     Genera el siguiente SKU libre en formato SPK-0001, SPK-0002, ...
@@ -63,6 +87,7 @@ class Producto(models.Model):
     class Meta:
         verbose_name = "Producto"
         verbose_name_plural = "Productos"
+        ordering = ["id"]
 
     def __str__(self):
         return f"[{self.sku}] {self.nombre}"

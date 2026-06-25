@@ -363,6 +363,11 @@ def demanda_vs_consumo(request):
     except (TypeError, ValueError):
         return Response({"detail": "Parámetro limit inválido."}, status=status.HTTP_400_BAD_REQUEST)
     limit = max(1, min(limit, 100))
+    try:
+        page = int(request.query_params.get("page", 1))
+    except (TypeError, ValueError):
+        return Response({"detail": "Parámetro page inválido."}, status=status.HTTP_400_BAD_REQUEST)
+    page = max(1, page)
 
     sol_qs = SolicitudDetalle.objects.filter(producto_id__isnull=False)
     dt_desde = timezone.make_aware(datetime.combine(fecha_desde, time.min))
@@ -488,7 +493,9 @@ def demanda_vs_consumo(request):
             r["nombre"] or "",
         )
     )
-    resultados = rows_full[:limit]
+    total = len(rows_full)
+    offset = (page - 1) * limit
+    resultados = rows_full[offset : offset + limit]
 
     return Response(
         {
@@ -496,6 +503,8 @@ def demanda_vs_consumo(request):
             "desde": periodo["desde"],
             "hasta": periodo["hasta"],
             "limit": limit,
+            "page": page,
+            "total": total,
             "filtro_historico": False,
             "resumen": {
                 "total_solicitado": total_solicitado,

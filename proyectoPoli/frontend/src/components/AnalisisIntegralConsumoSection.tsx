@@ -20,6 +20,7 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend,
 
 const API_HABITOS = "/api/analytics/habitos-resumen/";
 const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const PRODUCTOS_POR_PAGINA = 10;
 
 /** Títulos de tarjetas resumen (alineado con DemandaVsConsumoSection). */
 const RESUMEN_CARD_TITLE = "text-xs font-medium text-gray-500 uppercase leading-snug";
@@ -55,6 +56,64 @@ interface Props {
   hasta: string;
 }
 
+function PaginacionProductos({
+  page,
+  total,
+  pageSize,
+  onPageChange,
+  testIdPrefix,
+  itemLabel,
+}: {
+  page: number;
+  total: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  testIdPrefix: string;
+  itemLabel: string;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const fromIdx = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const toIdx = Math.min(page * pageSize, total);
+
+  if (total <= pageSize && page <= 1) return null;
+
+  return (
+    <div
+      className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+      data-testid={`${testIdPrefix}-paginacion`}
+    >
+      <p className="text-sm text-gray-600">
+        {total === 0
+          ? `Sin ${itemLabel}`
+          : `Mostrando ${fromIdx}–${toIdx} de ${total} ${itemLabel}`}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-pagina-anterior`}
+          disabled={page <= 1}
+          onClick={() => onPageChange(Math.max(1, page - 1))}
+          className="px-3 py-1.5 text-sm font-medium rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Anterior
+        </button>
+        <span className="text-sm text-gray-600 tabular-nums" data-testid={`${testIdPrefix}-pagina-info`}>
+          Página {page} de {totalPages}
+        </span>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-pagina-siguiente`}
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+          className="px-3 py-1.5 text-sm font-medium rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Siguiente
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
   const [habitos, setHabitos] = useState<HabitosData | null>(null);
   const [inteligente, setInteligente] = useState<DemandaVsConsumoResponse | null>(null);
@@ -62,6 +121,8 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [mesSeleccionado, setMesSeleccionado] = useState<string>("");
   const [tabActiva, setTabActiva] = useState<"productos_mes" | "analisis_inteligente">("analisis_inteligente");
+  const [inteligentePage, setInteligentePage] = useState(1);
+  const [inteligenteLoading, setInteligenteLoading] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -69,21 +130,35 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
     const urlHabitos = `${API_HABITOS}?${params}`;
     setLoading(true);
     setError(null);
-    Promise.all([
-      fetch(urlHabitos, { headers: { Authorization: `Bearer ${token}` } }).then(async (res) => {
+    fetch(urlHabitos, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
         if (res.status === 403) throw new Error("No tiene permiso para ver análisis de consumo.");
         if (!res.ok) throw new Error("Error al cargar hábitos de consumo");
         return (await res.json()) as HabitosData;
-      }),
-      getAnalyticsDemandaVsConsumo(token, { desde, hasta, limit: 50 }),
-    ])
-      .then(([h, i]) => {
-        setHabitos(h);
-        setInteligente(i);
       })
+      .then(setHabitos)
       .catch((e) => setError(e instanceof Error ? e.message : "Error al cargar análisis"))
       .finally(() => setLoading(false));
   }, [token, desde, hasta]);
+
+  useEffect(() => {
+    setInteligentePage(1);
+  }, [desde, hasta]);
+
+  useEffect(() => {
+    if (!token) return;
+    setInteligenteLoading(true);
+    setError(null);
+    getAnalyticsDemandaVsConsumo(token, {
+      desde,
+      hasta,
+      limit: PRODUCTOS_POR_PAGINA,
+      page: inteligentePage,
+    })
+      .then(setInteligente)
+      .catch((e) => setError(e instanceof Error ? e.message : "Error al cargar análisis"))
+      .finally(() => setInteligenteLoading(false));
+  }, [token, desde, hasta, inteligentePage]);
 
   const consumo_mensual = habitos?.consumo_mensual ?? [];
   const consumo_por_dia_semana = habitos?.consumo_por_dia_semana ?? [];
@@ -252,6 +327,14 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
     () => productosMesSeleccionado.reduce((sum, p) => sum + p.cantidad_total, 0),
     [productosMesSeleccionado],
   );
+
+  const inteligenteTotal = useMemo(() => {
+    if (!inteligente) return 0;
+    if (inteligente.total != null) return inteligente.total;
+    const n = inteligente.resultados.length;
+    const base = (inteligentePage - 1) * PRODUCTOS_POR_PAGINA + n;
+    return n === PRODUCTOS_POR_PAGINA ? base + 1 : base;
+  }, [inteligente, inteligentePage]);
 
   const lecturaPeriodo = useMemo(() => {
     const promedio = resumenPeriodo.promedioMensual || 0;
@@ -477,7 +560,11 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
 
               {tabActiva === "analisis_inteligente" && (
                 <div className="space-y-4" data-testid="analisis-tab-inteligente-panel">
-                  {!inteligente || inteligente.resultados.length === 0 ? (
+                  {inteligenteLoading ? (
+                    <p className="text-sm text-gray-500" data-testid="analisis-inteligente-loading">
+                      Cargando análisis inteligente...
+                    </p>
+                  ) : inteligenteTotal === 0 ? (
                     <p className="text-sm text-gray-500" data-testid="analisis-inteligente-empty">
                       No hay datos suficientes para generar el análisis inteligente en el período seleccionado.
                     </p>
@@ -554,7 +641,7 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {inteligente.resultados.map((row) => (
+                            {inteligente!.resultados.map((row) => (
                               <tr key={row.producto_id} data-testid={`analisis-inteligente-row-${row.producto_id}`} className="hover:bg-gray-50">
                                 <td className="px-4 py-3">
                                   <div className="text-sm font-medium text-gray-900">{row.nombre}</div>
@@ -573,6 +660,14 @@ export function AnalisisIntegralConsumoSection({ token, desde, hasta }: Props) {
                             ))}
                           </tbody>
                         </table>
+                        <PaginacionProductos
+                          page={inteligentePage}
+                          total={inteligenteTotal}
+                          pageSize={PRODUCTOS_POR_PAGINA}
+                          onPageChange={setInteligentePage}
+                          testIdPrefix="analisis-inteligente"
+                          itemLabel="insumos"
+                        />
                       </div>
                     </>
                   )}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useAccessToken } from "@/contexts/AuthContext";
+import { useAccessToken, useAuth } from "@/contexts/AuthContext";
 
 const BUSCAR_DEBOUNCE_MS = 400;
 
@@ -26,6 +26,9 @@ const MOV_PAGE_SIZE = 20;
 
 export function InventoryPage() {
   const token = useAccessToken();
+  const { user } = useAuth();
+  const canRegistrarMovimiento = ["COMPRAS", "CONTABLE", "ADMINISTRADOR"].includes(user?.role ?? "");
+  const canEliminarMovimiento = user?.role === "ADMINISTRADOR";
   const [movements, setMovements] = useState<Movement[]>([]);
   const [movTotal, setMovTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -73,7 +76,8 @@ export function InventoryPage() {
         setMovements(movJson.results ?? []);
         setMovTotal(typeof movJson.count === "number" ? movJson.count : 0);
       }
-      setProducts(await resProd.json());
+      const prodJson = await resProd.json();
+      setProducts(Array.isArray(prodJson) ? prodJson : prodJson.results ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error desconocido");
     } finally {
@@ -108,7 +112,22 @@ export function InventoryPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token) return;
+    if (!token || !canRegistrarMovimiento) return;
+
+    const productoId = parseInt(formData.producto, 10);
+    const productoSel = products.find((p) => p.id === productoId);
+    if (formData.tipo === "OUT") {
+      const stock = Number(productoSel?.stock_actual ?? 0);
+      if (stock <= 0) {
+        alert("No hay stock disponible para este producto. Registre una entrada primero.");
+        return;
+      }
+      if (formData.cantidad > stock) {
+        alert("El producto seleccionado tiene un stock inferior al solicitado.");
+        return;
+      }
+    }
+
     setSaving(true);
     
     try {
@@ -136,6 +155,35 @@ export function InventoryPage() {
       setFormData({ tipo: "IN", producto: "", cantidad: 1, observacion: "" });
     } catch (err) {
       alert("Error: " + (err instanceof Error ? err.message : "No se pudo registrar"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteMovement = async (movId: number) => {
+    if (!token || !canEliminarMovimiento) return;
+    if (
+      !window.confirm(
+        "¿Eliminar este movimiento? Se revertirá el efecto en el stock actual del producto.",
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/inventory/movimientos/${movId}/`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof err.detail === "string" ? err.detail : "Error al eliminar el movimiento",
+        );
+      }
+      await fetchData(page);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al eliminar");
     } finally {
       setSaving(false);
     }
@@ -170,12 +218,14 @@ export function InventoryPage() {
               <option value="asc">Más antiguos primero</option>
             </select>
           </div>
-          <button 
-            onClick={() => setShowModal(true)}
-            className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition"
-          >
-            Registrar Movimiento
-          </button>
+          {canRegistrarMovimiento && (
+            <button
+              onClick={() => setShowModal(true)}
+              className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition"
+            >
+              Registrar Movimiento
+            </button>
+          )}
         </div>
       </div>
 
@@ -224,6 +274,11 @@ export function InventoryPage() {
                 <span className="block font-normal normal-case text-gray-400">Stock actual</span>
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Usuario</th>
+              {canEliminarMovimiento && (
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Acciones
+                </th>
+              )}
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -255,11 +310,23 @@ export function InventoryPage() {
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{m.usuario_nombre}</td>
+                {canEliminarMovimiento && (
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => handleDeleteMovement(m.id)}
+                      className="text-red-700 hover:text-red-900 font-medium disabled:opacity-50"
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
             {movements.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-sm text-gray-500">
+                <td colSpan={canEliminarMovimiento ? 6 : 5} className="px-6 py-4 text-center text-sm text-gray-500">
                   {buscarQuery
                     ? `No hay movimientos que coincidan con «${buscarQuery}».`
                     : "No hay movimientos registrados."}
@@ -299,7 +366,7 @@ export function InventoryPage() {
       </div>
 
       {/* Modal Nuevo Movimiento */}
-      {showModal && (
+      {showModal && canRegistrarMovimiento && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
             <h3 className="text-lg font-bold mb-4">Registrar Movimiento de Stock</h3>
@@ -340,12 +407,22 @@ export function InventoryPage() {
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm border p-2 bg-white"
                 >
                   <option value="">-- Seleccionar producto --</option>
-                  {products.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.sku} - {p.nombre} (Stock: {p.stock_actual})
-                    </option>
-                  ))}
+                  {products.map(p => {
+                    const stock = Number(p.stock_actual ?? 0);
+                    const sinStock = formData.tipo === "OUT" && stock <= 0;
+                    return (
+                      <option key={p.id} value={p.id} disabled={sinStock}>
+                        {p.sku} - {p.nombre} (Stock: {stock})
+                        {sinStock ? " — sin stock" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
+                {formData.tipo === "OUT" && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    Solo puede registrar salidas de productos con stock disponible.
+                  </p>
+                )}
               </div>
 
               <div>

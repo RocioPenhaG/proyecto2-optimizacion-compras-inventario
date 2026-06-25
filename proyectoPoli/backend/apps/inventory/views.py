@@ -1,10 +1,14 @@
+from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Q
 
-from rest_framework import viewsets, mixins
+from rest_framework import status, viewsets, mixins
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
-from apps.users.permissions import IsNotFuncionario
+from apps.users.models import Role
+from apps.users.permissions import InventoryAccess
 
 from .models import StockProducto, MovStock
 from .serializers import StockProductoSerializer, MovStockSerializer
@@ -26,7 +30,7 @@ class StockProductoViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vie
     """
     queryset = StockProducto.objects.select_related("producto").all()
     serializer_class = StockProductoSerializer
-    permission_classes = [IsAuthenticated, IsNotFuncionario]
+    permission_classes = [IsAuthenticated, InventoryAccess]
 
 
 class MovStockViewSet(viewsets.ModelViewSet):
@@ -41,7 +45,7 @@ class MovStockViewSet(viewsets.ModelViewSet):
         "-fecha"
     )
     serializer_class = MovStockSerializer
-    permission_classes = [IsAuthenticated, IsNotFuncionario]
+    permission_classes = [IsAuthenticated, InventoryAccess]
     pagination_class = MovStockPagination
 
     def get_queryset(self):
@@ -55,3 +59,18 @@ class MovStockViewSet(viewsets.ModelViewSet):
         if orden_fecha == "asc":
             return queryset.order_by("fecha")
         return queryset.order_by("-fecha")
+
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role != Role.ADMINISTRADOR:
+            return Response(
+                {"detail": "Solo el administrador puede eliminar movimientos de inventario."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        instance = self.get_object()
+        try:
+            with transaction.atomic():
+                instance.revertir_efecto_en_stock()
+                instance.delete()
+        except ValidationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)

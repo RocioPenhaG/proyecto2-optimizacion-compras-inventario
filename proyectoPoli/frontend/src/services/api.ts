@@ -15,6 +15,13 @@ export interface User {
   first_name: string;
   last_name: string;
   role: string;
+  role_display?: string;
+  is_administrador?: boolean;
+}
+
+export function esAdministrador(user: User | null | undefined): boolean {
+  if (!user) return false;
+  return user.role === "ADMINISTRADOR" || user.is_administrador === true;
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
@@ -173,6 +180,8 @@ export interface DemandaVsConsumoResponse {
   desde: string;
   hasta: string;
   limit: number;
+  page?: number;
+  total?: number;
   filtro_historico?: boolean;
   resumen: DemandaVsConsumoResumen;
   resultados: DemandaVsConsumoItem[];
@@ -284,11 +293,12 @@ export async function getAnalyticsTopProductosConsumidos(
 
 export async function getAnalyticsDemandaVsConsumo(
   accessToken: string,
-  options?: { desde?: string; hasta?: string; limit?: number },
+  options?: { desde?: string; hasta?: string; limit?: number; page?: number },
 ): Promise<DemandaVsConsumoResponse> {
   const range = resolveAnalyticsQueryRange(options?.desde, options?.hasta);
   const params = buildAnalyticsQueryParams(range.desde, range.hasta);
   if (options?.limit != null) params.set("limit", String(Math.min(100, Math.max(1, options.limit))));
+  if (options?.page != null) params.set("page", String(Math.max(1, options.page)));
   const q = params.toString();
   const res = await fetch(`${API_BASE}/analytics/demanda-vs-consumo/?${q}`, {
     headers: { Authorization: `Bearer ${accessToken}` },

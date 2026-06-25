@@ -89,10 +89,7 @@ TEMPLATES = [
 ]
 
 DATABASES = {
-    "default": env.db(
-        "DATABASE_URL",
-        default="postgres://segupak:segupak_secret@localhost:5432/segupak_db",
-    )
+    "default": env.db("DATABASE_URL")
 }
 
 AUTH_PASSWORD_VALIDATORS = [
