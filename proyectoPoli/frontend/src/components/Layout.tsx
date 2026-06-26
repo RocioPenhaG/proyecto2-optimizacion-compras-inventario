@@ -13,6 +13,7 @@ export function Layout() {
             <nav className="hidden md:flex gap-4">
               <NavLink 
                 to="/" 
+                data-testid="nav-inicio"
                 className={({ isActive }) => `text-sm font-medium ${isActive ? 'text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
                 end
               >
@@ -20,6 +21,7 @@ export function Layout() {
               </NavLink>
               <NavLink 
                 to="/products" 
+                data-testid="nav-productos"
                 className={({ isActive }) => `text-sm font-medium ${isActive ? 'text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
               >
                 Productos
@@ -27,6 +29,7 @@ export function Layout() {
               {user?.role !== "FUNCIONARIO" && (
                 <NavLink
                   to="/inventory"
+                  data-testid="nav-inventario"
                   className={({ isActive }) =>
                     `text-sm font-medium ${isActive ? "text-blue-600" : "text-gray-600 hover:text-gray-900"}`
                   }
@@ -36,6 +39,7 @@ export function Layout() {
               )}
               <NavLink 
                 to="/solicitudes" 
+                data-testid="nav-solicitudes"
                 className={({ isActive }) => `text-sm font-medium ${isActive ? 'text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
               >
                 Solicitudes
@@ -60,6 +64,7 @@ export function Layout() {
             <button
               type="button"
               onClick={logout}
+              data-testid="btn-logout"
               className="text-sm text-red-600 hover:text-red-800 font-medium"
             >
               Cerrar sesión

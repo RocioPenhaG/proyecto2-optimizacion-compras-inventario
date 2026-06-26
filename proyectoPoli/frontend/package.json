@@ -9,10 +9,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "test:e2e": "playwright test",
-    "test:e2e:visual": "playwright test tests/e2e/analytics-visual.spec.ts",
+    "test:e2e": "npm run test:e2e:operativa",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:visual": "playwright test tests/e2e/analytics-visual.spec.ts",
+    "test:e2e:operativa": "playwright test tests/e2e/roles.spec.ts tests/e2e/solicitudes-catalogo.spec.ts tests/e2e/solicitudes-fuera-catalogo.spec.ts tests/e2e/inventario.spec.ts tests/e2e/analitica-dashboard.spec.ts",
+    "test:e2e:release2": "playwright test tests/e2e/release2.spec.ts tests/e2e/release2-cambios.spec.ts"
   },
   "dependencies": {
     "chart.js": "4.4.6",

@@ -316,7 +316,7 @@ export function AnalyticsCorridasSection({ token }: AnalyticsCorridasSectionProp
                       setTendenciaVisual(null);
                     }}
                   >
-                    <td className="px-4 py-2 text-sm">{corridaEstadoLabel(c.estado)}</td>
+                    <td className="px-4 py-2 text-sm" data-testid={`estado-corrida-analitica-${c.id}`}>{corridaEstadoLabel(c.estado)}</td>
                     <td className="px-4 py-2 text-sm">{formatIsoDateTimeToDMYHM(c.fecha_ejecucion)}</td>
                     <td className="px-4 py-2 text-sm text-center">{c.registros_procesados}</td>
                     <td

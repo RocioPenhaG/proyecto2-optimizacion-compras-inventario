@@ -9,20 +9,20 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: {
+    server: {
     host: "0.0.0.0",
     port: 5173,
     proxy: {
       "/api": {
-        target: "http://backend:8000",
+        target: process.env.VITE_API_PROXY ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/admin": {
-        target: "http://backend:8000",
+        target: process.env.VITE_API_PROXY ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/static": {
-        target: "http://backend:8000",
+        target: process.env.VITE_API_PROXY ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

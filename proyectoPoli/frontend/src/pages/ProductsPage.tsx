@@ -394,7 +394,7 @@ export function ProductsPage() {
       
       <div className="bg-white shadow sm:rounded-lg">
         <div className="overflow-x-auto">
-          <table className={`w-full ${tableMinWidth} divide-y divide-gray-200`}>
+          <table className={`w-full ${tableMinWidth} divide-y divide-gray-200`} data-testid="tabla-inventario">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
@@ -452,7 +452,7 @@ export function ProductsPage() {
                     </td>
                     {showStockColumns && (
                       <>
-                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900" data-testid={`stock-producto-${p.id}`}>
                           <span className="font-semibold">
                             {stockAct} {p.unidad}
                           </span>
@@ -462,7 +462,10 @@ export function ProductsPage() {
                         </td>
                         <td className="px-4 py-4 whitespace-nowrap">
                           {esCritico ? (
-                            <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800">
+                            <span
+                              className="px-2 py-0.5 text-xs font-semibold rounded-full bg-red-100 text-red-800"
+                              data-testid="alerta-stock-critico"
+                            >
                               Crítico
                             </span>
                           ) : (

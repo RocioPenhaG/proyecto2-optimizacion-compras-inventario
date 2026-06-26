@@ -231,10 +231,12 @@ export function DashboardPage() {
         </div>
       </div>
 
+      <div className="space-y-6" data-testid="dashboard-analitico">
       <AnalyticsDashboardSection token={token} desde={desdeFiltro} hasta={hastaFiltro} />
 
       <AnalisisIntegralConsumoSection token={token} desde={desdeFiltro} hasta={hastaFiltro} />
       <AnalyticsCorridasSection token={token} />
+      </div>
     </div>
   );
 }

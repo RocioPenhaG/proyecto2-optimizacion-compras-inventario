@@ -58,7 +58,7 @@ export function DashboardPeriodFilters({
 
   return (
 
-    <div className="flex flex-col items-end gap-2" data-testid="dashboard-period-filters">
+    <div className="flex flex-col items-end gap-2" data-testid="filtros-dashboard">
 
       <div className="flex flex-wrap items-center justify-end gap-2">
 

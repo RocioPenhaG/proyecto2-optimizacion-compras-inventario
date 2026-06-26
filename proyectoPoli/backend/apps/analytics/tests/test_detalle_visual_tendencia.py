@@ -228,7 +228,9 @@ class AnalyticsDetalleVisualTestCase(BaseAnalyticsETLTestCase):
         self.client.force_authenticate(user=self.compras)
         resp_lista = self.client.get("/api/purchases/solicitudes/")
         self.assertEqual(resp_lista.status_code, 200)
-        fila_lista = next(item for item in resp_lista.json() if item["id"] == solicitud.id)
+        body_lista = resp_lista.json()
+        items = body_lista["results"] if isinstance(body_lista, dict) and "results" in body_lista else body_lista
+        fila_lista = next(item for item in items if item["id"] == solicitud.id)
         self.assertFalse(fila_lista["alerta_proyeccion_consumo"])
 
         resp_detalle = self.client.get(f"/api/purchases/solicitudes/{solicitud.id}/")

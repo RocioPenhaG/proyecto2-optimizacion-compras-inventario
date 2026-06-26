@@ -631,6 +631,7 @@ function DestinoCompraSelector({
             type="radio"
             name="tipo_destino_compra_detalle"
             value="INVENTARIO"
+            data-testid="destino-compra-inventario"
             checked={value === "INVENTARIO"}
             onChange={() => onChange("INVENTARIO")}
             className="mt-0.5"
@@ -647,6 +648,7 @@ function DestinoCompraSelector({
             type="radio"
             name="tipo_destino_compra_detalle"
             value="ENTREGA_INMEDIATA"
+            data-testid="destino-compra-entrega"
             checked={value === "ENTREGA_INMEDIATA"}
             onChange={() => onChange("ENTREGA_INMEDIATA")}
             className="mt-0.5"
@@ -1222,6 +1224,7 @@ export function SolicitudesPage() {
           {canCreateSolicitud && (
             <button
               type="button"
+              data-testid="btn-nueva-solicitud"
               onClick={() => {
                 setNewForm(initialNewForm(displaySolicitante(user)));
                 setShowNewModal(true);
@@ -1235,7 +1238,7 @@ export function SolicitudesPage() {
       </div>
 
       <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full divide-y divide-gray-200" data-testid="tabla-solicitudes">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">N°</th>
@@ -1254,7 +1257,7 @@ export function SolicitudesPage() {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {list.map((s) => (
-              <tr key={s.id} className="hover:bg-gray-50">
+              <tr key={s.id} className="hover:bg-gray-50" data-testid={`solicitud-row-${s.id}`}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{numeroSolicitudVisible(s)}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{s.fecha}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
@@ -1534,6 +1537,7 @@ export function SolicitudesPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <select
                       value={newFormItem.tipo}
+                      data-testid="select-tipo-producto"
                       onChange={(e) => updateItemField("tipo", e.target.value as ItemRow["tipo"])}
                       className={FORM_CONTROL}
                       required
@@ -1544,6 +1548,7 @@ export function SolicitudesPage() {
                     {newFormItem.tipo === "catalogo" && (
                       <select
                         value={newFormItem.producto_id}
+                        data-testid="select-producto-catalogo"
                         onChange={(e) => updateItemField("producto_id", e.target.value)}
                         className={FORM_CONTROL}
                         required
@@ -1572,6 +1577,7 @@ export function SolicitudesPage() {
                       </label>
                       <input
                         type="text"
+                        data-testid="input-nombre-fuera-catalogo"
                         value={newFormItem.nombre_fuera}
                         onChange={(e) => updateItemField("nombre_fuera", e.target.value)}
                         placeholder="Nombre del insumo a solicitar"
@@ -1587,6 +1593,7 @@ export function SolicitudesPage() {
                   <label className={FORM_LABEL}>Descripción:</label>
                   <input
                     type="text"
+                    data-testid="input-descripcion"
                     value={newFormItem.descripcion}
                     onChange={(e) => updateItemField("descripcion", e.target.value)}
                     placeholder={
@@ -1624,6 +1631,7 @@ export function SolicitudesPage() {
                     <input
                       type="number"
                       name="cantidad"
+                      data-testid="input-cantidad"
                       min={1}
                       step={1}
                       required
@@ -1664,6 +1672,7 @@ export function SolicitudesPage() {
                   </label>
                   <input
                     type="text"
+                    data-testid="input-destino"
                     value={newForm.destino}
                     onChange={(e) => setNewForm((f) => ({ ...f, destino: e.target.value }))}
                     placeholder="Área o sector donde se utilizará el insumo"
@@ -1694,6 +1703,7 @@ export function SolicitudesPage() {
                 <div className="flex justify-center pt-2">
                   <button
                     type="submit"
+                    data-testid="btn-guardar-solicitud"
                     disabled={saving}
                     className="px-10 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-md shadow hover:bg-indigo-700 disabled:opacity-50"
                   >
@@ -1711,7 +1721,7 @@ export function SolicitudesPage() {
         <div className="fixed inset-0 bg-gray-600/40 z-50 overflow-y-auto">
           <div className="flex min-h-full items-start justify-center p-4 sm:p-6">
             <div className={`${FORM_BOX} my-4 sm:my-6 max-h-[92vh] overflow-y-auto`}>
-              <div className={FORM_INNER}>
+              <div className={FORM_INNER} data-testid="detalle-solicitud">
                 <header className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-300 pb-4 mb-5">
                   <div>
                     <h2 className={FORM_TITLE}>SOLICITUD DE INSUMOS #{numeroSolicitudVisible(showDetailModal)}</h2>
@@ -1889,6 +1899,7 @@ export function SolicitudesPage() {
                           <div className="mt-3 flex flex-wrap gap-2 items-center">
                             <select
                               value={vinculoProductoByDetalle[d.id] ?? ""}
+                              data-testid="select-vincular-producto"
                               onChange={(e) =>
                                 setVinculoProductoByDetalle((m) => ({ ...m, [d.id]: e.target.value }))
                               }
@@ -1904,6 +1915,7 @@ export function SolicitudesPage() {
                             <button
                               type="button"
                               disabled={saving}
+                              data-testid="btn-vincular-producto"
                               onClick={() => vincularDetalle(d.id)}
                               className="text-sm px-3 py-1.5 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
                             >
@@ -2067,6 +2079,7 @@ export function SolicitudesPage() {
                     <div>
                       <label className={FORM_LABEL}>Comentario sobre la decisión (opcional):</label>
                       <textarea
+                        data-testid="input-motivo-rechazo"
                         value={comentarioDecision}
                         onChange={(e) => setComentarioDecision(e.target.value)}
                         rows={3}
@@ -2100,6 +2113,7 @@ export function SolicitudesPage() {
                 {showDetailModal.estado === "SOLICITADO" && puedeGestionarInicial && (
                   <button
                     type="button"
+                    data-testid="btn-en-revision"
                     disabled={saving}
                     onClick={() =>
                       changeEstado(
@@ -2131,6 +2145,7 @@ export function SolicitudesPage() {
                       }
                       onClick={() => changeEstado(showDetailModal.id, "COMPRA_ACEPTADA")}
                       className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                      data-testid="btn-aprobar"
                     >
                       Aprobar
                     </button>
@@ -2144,6 +2159,7 @@ export function SolicitudesPage() {
                       }
                       onClick={() => changeEstado(showDetailModal.id, "COMPRA_RECHAZADA")}
                       className="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 disabled:opacity-50"
+                      data-testid="btn-rechazar"
                     >
                       Rechazar
                     </button>
@@ -2158,6 +2174,7 @@ export function SolicitudesPage() {
                         disabled={saving}
                         onClick={() => changeEstado(showDetailModal.id, "COMPRA_ACEPTADA")}
                         className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                        data-testid="btn-aprobar"
                       >
                         Aprobar
                       </button>
@@ -2166,6 +2183,7 @@ export function SolicitudesPage() {
                         disabled={saving}
                         onClick={() => changeEstado(showDetailModal.id, "COMPRA_RECHAZADA")}
                         className="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 disabled:opacity-50"
+                        data-testid="btn-rechazar"
                       >
                         Rechazar
                       </button>
@@ -2232,6 +2250,7 @@ export function SolicitudesPage() {
                     }
                     onClick={() => changeEstado(showDetailModal.id, "FINALIZADO")}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                    data-testid="btn-finalizar"
                   >
                     Finalizar
                   </button>

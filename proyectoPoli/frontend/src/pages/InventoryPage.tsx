@@ -221,6 +221,7 @@ export function InventoryPage() {
           {canRegistrarMovimiento && (
             <button
               onClick={() => setShowModal(true)}
+              data-testid="btn-registrar-movimiento"
               className="bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 transition"
             >
               Registrar Movimiento
@@ -263,7 +264,7 @@ export function InventoryPage() {
       </div>
 
       <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full divide-y divide-gray-200" data-testid="tabla-movimientos">
           <thead className="bg-gray-50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
@@ -369,14 +370,15 @@ export function InventoryPage() {
       {showModal && canRegistrarMovimiento && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold mb-4">Registrar Movimiento de Stock</h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <h3 className="text-lg font-bold mb-4" data-testid="modal-movimiento-titulo">Registrar Movimiento de Stock</h3>
+            <form onSubmit={handleSubmit} className="space-y-4" data-testid="form-movimiento">
               
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Tipo de movimiento</label>
                   <select 
                     value={formData.tipo} 
+                    data-testid="select-tipo-movimiento"
                     onChange={e => setFormData({...formData, tipo: e.target.value})} 
                     className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm border p-2 bg-white"
                   >
@@ -389,6 +391,7 @@ export function InventoryPage() {
                   <label className="block text-sm font-medium text-gray-700">Cantidad*</label>
                   <input 
                     type="number" 
+                    data-testid="input-cantidad-movimiento"
                     required 
                     min="1" 
                     value={formData.cantidad} 
@@ -402,6 +405,7 @@ export function InventoryPage() {
                 <label className="block text-sm font-medium text-gray-700">Producto*</label>
                 <select 
                   required
+                  data-testid="select-producto-movimiento"
                   value={formData.producto} 
                   onChange={e => setFormData({...formData, producto: e.target.value})} 
                   className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm border p-2 bg-white"
@@ -440,7 +444,7 @@ export function InventoryPage() {
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
                   Cancelar
                 </button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-green-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-green-700 disabled:bg-green-400">
+                <button type="submit" disabled={saving} data-testid="btn-guardar-movimiento" className="px-4 py-2 bg-green-600 border border-transparent rounded-md text-sm font-medium text-white hover:bg-green-700 disabled:bg-green-400">
                   {saving ? "Registrando..." : "Registrar Movimiento"}
                 </button>
               </div>

@@ -126,10 +126,25 @@ class FuncionarioCatalogoTests(TestCase):
         self.assertEqual(r.json()["stock_minimo"], 0)
 
     def test_crear_producto_desde_solicitud_exige_stock_inicial(self):
+        from apps.purchases.models import SolicitudInsumo
+
+        func = User.objects.create_user(username="f_stock0", password="x", role=Role.FUNCIONARIO)
+        sol = SolicitudInsumo.objects.create(
+            solicitante=func,
+            destino="D",
+            tipo_destino_compra="INVENTARIO",
+        )
+
         self.client.force_authenticate(self.compras)
         r = self.client.post(
             "/api/products/productos/",
-            {"nombre": "Sin stock", "unidad": "UN", "solicitud_id": 1, "stock_inicial": 0},
+            {
+                "nombre": "Sin stock",
+                "unidad": "UN",
+                "solicitud_id": sol.pk,
+                "stock_inicial": 0,
+                "stock_minimo": 1,
+            },
             format="json",
         )
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)

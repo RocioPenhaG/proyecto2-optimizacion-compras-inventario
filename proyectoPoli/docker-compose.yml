@@ -69,6 +69,8 @@ services:
     build: ./frontend
     container_name: sgpk_frontend
     command: npm run dev -- --host 0.0.0.0
+    environment:
+      VITE_API_PROXY: http://backend:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
